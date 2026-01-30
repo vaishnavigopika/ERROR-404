@@ -40,7 +40,10 @@ export default function RequestsPage() {
         const q = query(requestsRef, where('status', '==', 'open'));
         const querySnapshot = await getDocs(q);
 
-        const allRequests = querySnapshot.docs.map(doc => doc.data() as BloodRequest);
+        const allRequests = querySnapshot.docs.map(doc => ({id: 
+          doc.id,
+          ...doc.data()
+        })) as BloodRequest[];
         setRequests(allRequests);
 
         // Fetch recipient names
