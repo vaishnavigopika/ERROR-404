@@ -4,15 +4,15 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { BloodRequest, UserProfile } from '@/lib/types';
 import { Droplet, Calendar, AlertCircle, User } from 'lucide-react';
 import Link from 'next/link';
-import { offerBloodDonation } from '@/lib/services/donationService'; // ← NEW import
-import { toast } from 'sonner'; // assuming sonner is set up
+import { offerBloodDonation } from '@/lib/services/donationService';
+import { toast } from 'sonner';
 
 const urgencyColors = {
   low: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
@@ -52,18 +52,26 @@ export default function RequestsPage() {
 
         setRequests(allRequests);
 
-        // Fetch recipient names
-        const usersRef = collection(db, 'users');
+        // Fetch recipient names - FIXED VERSION
         const names: Record<string, string> = {};
 
         for (const request of allRequests) {
           const recipientId = request.recipientId;
           if (recipientId && !names[recipientId]) {
-            const userQuery = query(usersRef, where('uid', '==', recipientId)); // adjust field if different
-            const userDocs = await getDocs(userQuery);
-            if (!userDocs.empty) {
-              const userData = userDocs.docs[0].data() as UserProfile;
-              names[recipientId] = userData.name || 'Unknown User';
+            try {
+              // Use doc() to get user by document ID directly
+              const userDocRef = doc(db, 'users', recipientId);
+              const userDoc = await getDoc(userDocRef);
+              
+              if (userDoc.exists()) {
+                const userData = userDoc.data() as UserProfile;
+                names[recipientId] = userData.name || 'Unknown User';
+              } else {
+                names[recipientId] = 'Unknown User';
+              }
+            } catch (error) {
+              console.error(`Error fetching user ${recipientId}:`, error);
+              names[recipientId] = 'Unknown User';
             }
           }
         }
