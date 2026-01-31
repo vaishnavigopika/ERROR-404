@@ -3,15 +3,25 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  DocumentData,
+  QuerySnapshot,
+  doc,
+  getDoc
+} from 'firebase/firestore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { UserProfile } from '@/lib/types';
-import { getCompatibleDonors } from '@/lib/bloodCompatibility';
+import { Button } from '@/components/ui/button';
 import { Heart, MapPin, Phone, Mail, MessageSquare } from 'lucide-react';
 import Link from 'next/link';
+import { getCompatibleDonors } from '@/lib/bloodCompatibility';
+import { UserProfile } from '@/lib/types';
+import { toast } from 'sonner';
 
 export default function DonorsPage() {
   const { user } = useAuth();
@@ -22,62 +32,78 @@ export default function DonorsPage() {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    const fetchDonors = async () => {
-      if (!user) return;
+    if (!user?.uid) {
+      setLoading(false);
+      return;
+    }
 
-      try {
-        // Fetch current user profile
-        const usersRef = collection(db, 'users');
-        const userQuery = query(usersRef, where('id', '==', user.uid));
-        const userDocs = await getDocs(userQuery);
-        
-        if (!userDocs.empty) {
-          const profile = userDocs.docs[0].data() as UserProfile;
-          setUserProfile(profile);
+    // 1. Fetch current user's profile (to know their blood type)
+    const userRef = doc(db, 'users', user.uid);
+    const unsubUser = onSnapshot(userRef, (snap) => {
+      if (snap.exists()) {
+        const profile = snap.data() as UserProfile;
+        setUserProfile(profile);
 
-          // Get compatible donors
-          const compatibleBloodTypes = getCompatibleDonors(profile.bloodType);
+        // 2. Fetch compatible donors in real-time
+        const compatibleTypes = getCompatibleDonors(profile.bloodType);
 
-          // Fetch all donors
-          const donorQuery = query(
-            usersRef,
-            where('role', '==', 'donor'),
-            where('isAvailable', '==', true)
-          );
-          const donorDocs = await getDocs(donorQuery);
+        const donorsQuery = query(
+          collection(db, 'users'),
+          where('role', '==', 'donor'),
+          where('isAvailable', '==', true),
+          where('bloodType', 'in', compatibleTypes)
+        );
 
-          const allDonors = donorDocs.docs
-            .map(doc => doc.data() as UserProfile)
-            .filter(donor => compatibleBloodTypes.includes(donor.bloodType) && donor.id !== user.uid);
+        const unsubDonors = onSnapshot(donorsQuery, (snapshot: QuerySnapshot<DocumentData>) => {
+          const loadedDonors = snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() } as UserProfile))
+            .filter((donor) => donor.id !== user.uid); // exclude self
 
-          setDonors(allDonors);
-          setFilteredDonors(allDonors);
-        }
-      } catch (error) {
-        console.error('Error fetching donors:', error);
-      } finally {
+          setDonors(loadedDonors);
+          setFilteredDonors(loadedDonors);
+          setLoading(false);
+        }, (err) => {
+          console.error('Error fetching donors:', err);
+          toast.error('Failed to load donors');
+          setLoading(false);
+        });
+
+        return () => unsubDonors();
+      } else {
         setLoading(false);
       }
-    };
+    }, (err) => {
+      console.error('Error fetching user profile:', err);
+      toast.error('Failed to load your profile');
+      setLoading(false);
+    });
 
-    fetchDonors();
-  }, [user]);
+    return () => unsubUser();
+  }, [user?.uid]);
 
+  // Client-side search filter
   useEffect(() => {
-    const filtered = donors.filter(donor =>
-      donor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      donor.bloodType.includes(searchTerm) ||
-      donor.college.toLowerCase().includes(searchTerm.toLowerCase())
+    if (!searchTerm.trim()) {
+      setFilteredDonors(donors);
+      return;
+    }
+
+    const term = searchTerm.toLowerCase();
+    const filtered = donors.filter((donor) =>
+      donor.name?.toLowerCase().includes(term) ||
+      donor.bloodType?.toLowerCase().includes(term) ||
+      donor.college?.toLowerCase().includes(term)
     );
+
     setFilteredDonors(filtered);
   }, [searchTerm, donors]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-foreground">Loading donors...</p>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center space-y-4">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-muted-foreground">Finding compatible donors...</p>
         </div>
       </div>
     );
@@ -87,82 +113,86 @@ export default function DonorsPage() {
     <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
       <div className="space-y-4">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Find Blood Donors</h1>
-          <p className="text-foreground/60 mt-2">
-            Compatible donors for {userProfile?.bloodType} blood type
+          <h1 className="text-3xl font-bold tracking-tight">Find Blood Donors</h1>
+          <p className="text-muted-foreground mt-2">
+            Compatible donors for your blood type {userProfile?.bloodType || '—'}
           </p>
         </div>
 
-        <div className="flex gap-4">
-          <Input
-            placeholder="Search by name, blood type, or college..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="border-border flex-1"
-          />
-        </div>
+        <Input
+          placeholder="Search by name, blood type, or college..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-md border-border"
+        />
       </div>
 
       {filteredDonors.length === 0 ? (
-        <Card className="border-border">
-          <CardContent className="pt-12 text-center">
-            <Heart className="w-12 h-12 text-muted-foreground/50 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-2">
-              No compatible donors found
-            </h3>
-            <p className="text-foreground/60">
+        <Card className="border-border bg-muted/30">
+          <CardContent className="pt-12 pb-12 text-center space-y-4">
+            <Heart className="w-16 h-16 text-muted-foreground/50 mx-auto" />
+            <h3 className="text-xl font-semibold">No compatible donors found</h3>
+            <p className="text-muted-foreground max-w-md mx-auto">
               {searchTerm
-                ? 'Try adjusting your search criteria'
-                : 'Check back later when more donors register'}
+                ? 'Try different search terms'
+                : 'Check back later when more donors become available'}
             </p>
           </CardContent>
         </Card>
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredDonors.map(donor => (
-            <Card key={donor.id} className="border-border overflow-hidden hover:shadow-lg transition-shadow">
+          {filteredDonors.map((donor) => (
+            <Card key={donor.id} className="border-border hover:shadow-lg transition-all duration-200">
               <CardHeader className="pb-4">
                 <div className="flex items-start justify-between">
                   <div>
-                    <CardTitle className="text-lg">{donor.name}</CardTitle>
-                    <CardDescription className="mt-1">
-                      <Badge className="bg-primary/20 text-primary border-primary/30">
-                        {donor.bloodType}
+                    <CardTitle className="text-lg">{donor.name || 'Anonymous Donor'}</CardTitle>
+                    <CardDescription className="mt-1 flex items-center gap-2">
+                      <Badge variant="outline" className="text-primary border-primary/50 bg-primary/10">
+                        {donor.bloodType || '—'}
                       </Badge>
+                      {donor.isAvailable && (
+                        <span className="text-xs text-green-600 font-medium">Available now</span>
+                      )}
                     </CardDescription>
                   </div>
                 </div>
               </CardHeader>
+
               <CardContent className="space-y-4">
-                <div className="space-y-3 text-sm">
-                  <div className="flex items-center gap-3 text-foreground/70">
-                    <MapPin className="w-4 h-4 text-primary flex-shrink-0" />
-                    <span>{donor.college}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-foreground/70">
+                <div className="space-y-3 text-sm text-muted-foreground">
+                  {donor.college && (
+                    <div className="flex items-center gap-3">
+                      <MapPin className="w-4 h-4 text-primary flex-shrink-0" />
+                      <span>{donor.college}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3">
                     <Heart className="w-4 h-4 text-primary flex-shrink-0" />
-                    <span>{donor.totalDonations} donations</span>
+                    <span>{donor.totalDonations || 0} donations</span>
                   </div>
-                  <div className="flex items-center gap-3 text-foreground/70">
-                    <Phone className="w-4 h-4 text-primary flex-shrink-0" />
-                    <span>{donor.phoneNumber}</span>
-                  </div>
-                  {donor.location.address && (
-                    <div className="flex items-center gap-3 text-foreground/70">
+                  {donor.phoneNumber && (
+                    <div className="flex items-center gap-3">
+                      <Phone className="w-4 h-4 text-primary flex-shrink-0" />
+                      <span>{donor.phoneNumber}</span>
+                    </div>
+                  )}
+                  {donor.email && (
+                    <div className="flex items-center gap-3">
                       <Mail className="w-4 h-4 text-primary flex-shrink-0" />
-                      <span>{donor.location.address}</span>
+                      <span>{donor.email}</span>
                     </div>
                   )}
                 </div>
 
-                <div className="pt-4 border-t border-border flex gap-2">
+                <div className="pt-4 border-t border-border flex gap-3">
                   <Link href={`/dashboard/messages?userId=${donor.id}`} className="flex-1">
-                    <Button variant="outline" className="w-full border-border bg-transparent" size="sm">
+                    <Button variant="outline" className="w-full" size="sm">
                       <MessageSquare className="w-4 h-4 mr-2" />
                       Message
                     </Button>
                   </Link>
-                  <Button className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90" size="sm">
+                  <Button className="flex-1 bg-primary hover:bg-primary/90" size="sm">
                     <Heart className="w-4 h-4 mr-2" />
                     Connect
                   </Button>

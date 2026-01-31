@@ -1,3 +1,4 @@
+// lib/services/donationService.ts
 import {
   collection,
   addDoc,
@@ -16,35 +17,42 @@ import {
 import { db } from '@/lib/firebase';
 import { updateUserAfterDonation } from './userService';
 import { DonationRecord } from '@/lib/types';
-import { BloodType } from '../bloodCompatibility';
+import { BloodType } from '@/lib/bloodCompatibility'; // adjust path if needed
 
 interface OfferDonationInput {
   donorId: string;
   requestId: string;
   units: number;
   date: Date;
-  bloodType?: string; // optional – can be fetched from user if missing
+  bloodType?: BloodType; // should be BloodType if provided
 }
 
 export async function offerBloodDonation(input: OfferDonationInput): Promise<string> {
   const { donorId, requestId, units, date, bloodType: providedBloodType } = input;
 
   try {
-    // Optional: Fetch donor's blood type if not provided
-    let bloodType = providedBloodType;
+    // 1. Fetch donor's blood type if not provided
+    let bloodType: BloodType | undefined = providedBloodType;
+
     if (!bloodType) {
       const donorSnap = await getDoc(doc(db, 'users', donorId));
       if (donorSnap.exists()) {
-        bloodType = donorSnap.data()?.bloodType as string | undefined;
+        const candidate = donorSnap.data()?.bloodType as string | undefined;
+        // Optional: validate against your BloodType union
+        if (candidate && isValidBloodType(candidate)) {
+          bloodType = candidate as BloodType;
+        } else {
+          console.warn(`Invalid or missing blood type for donor ${donorId}`);
+        }
       }
     }
 
-    // 1. Create donation record
+    // 2. Create donation record
     const donationData: Partial<DonationRecord> = {
       donorId,
       requestId,
       units,
-      bloodType: bloodType as BloodType | undefined,
+      bloodType, // now safe: BloodType | undefined
       status: 'offered',
       offeredAt: serverTimestamp(),
       createdAt: serverTimestamp(),
@@ -52,8 +60,9 @@ export async function offerBloodDonation(input: OfferDonationInput): Promise<str
     };
 
     const donationRef = await addDoc(collection(db, 'donations'), donationData);
+    console.log(`[Donation] Created offer with ID: ${donationRef.id}`);
 
-    // 2. Update blood request (decrease units needed)
+    // 3. Update blood request
     const requestRef = doc(db, 'bloodRequests', requestId);
     const requestSnap = await getDoc(requestRef);
 
@@ -66,35 +75,48 @@ export async function offerBloodDonation(input: OfferDonationInput): Promise<str
         updatedAt: serverTimestamp(),
       };
 
-      // Update the field that exists in your schema
+      // Update whichever field exists
       if ('quantity' in reqData) {
         updatePayload.quantity = newUnits;
       } else if ('unitsNeeded' in reqData) {
         updatePayload.unitsNeeded = newUnits;
       }
 
-      // Auto-mark as matched if fulfilled
       if (newUnits <= 0) {
         updatePayload.status = 'matched';
       }
 
       await updateDoc(requestRef, updatePayload);
+      console.log(`[Donation] Updated request ${requestId}: units now ${newUnits}`);
     } else {
-      console.warn(`Request not found: ${requestId}. Donation recorded anyway.`);
+      console.warn(`[Donation] Request ${requestId} not found — donation still saved`);
     }
 
-    // 3. Update donor's availability & last donation
+    // 4. Update donor status & last donation
     await updateUserAfterDonation(donorId, date);
+    console.log(`[Donation] Donor ${donorId} status updated`);
 
     return donationRef.id;
   } catch (error: any) {
-    console.error('Error offering blood donation:', error);
-    throw new Error(error.message || 'Failed to offer blood. Please try again.');
+    console.error('[Donation] Failed to offer blood:', error);
+    throw new Error(error.message || 'Failed to submit blood offer. Try again.');
   }
 }
 
 /**
- * Subscribe to real-time updates of a user's donations
+ * Helper to validate blood type string against BloodType union
+ * Add your actual BloodType values here
+ */
+function isValidBloodType(value: string): value is BloodType {
+  const validTypes: BloodType[] = [
+    'A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'
+    // add any other types from your bloodCompatibility.ts
+  ];
+  return validTypes.includes(value as BloodType);
+}
+
+/**
+ * Real-time subscription to a user's donations (already good)
  */
 export function subscribeToUserDonations(
   userId: string,
@@ -116,7 +138,7 @@ export function subscribeToUserDonations(
       callback(donations);
     },
     (error) => {
-      console.error('Donations real-time listener failed:', error);
+      console.error('[Donation] Real-time listener error:', error);
     }
   );
 }
