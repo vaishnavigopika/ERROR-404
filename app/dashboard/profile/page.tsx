@@ -281,11 +281,11 @@ export default function ProfilePage() {
               <span className="text-foreground/70">Account Type</span>
               <span className="font-semibold text-foreground capitalize">{userProfile?.role}</span>
             </div>
-            {userProfile?.lastDonationDate && (
+            {userProfile?.lastDonation && (
               <div className="flex justify-between">
                 <span className="text-foreground/70">Last Donation</span>
                 <span className="font-semibold text-foreground">
-                  {new Date(userProfile.lastDonationDate).toLocaleDateString()}
+                  {new Date(userProfile.lastDonation).toLocaleDateString()}
                 </span>
               </div>
             )}

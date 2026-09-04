@@ -82,7 +82,7 @@ export default function SignupPage() {
         year: formData.year,
         profilePhotoUrl: '',
         medicalHistory: '',
-        lastDonationDate: '',
+        lastDonation: '',
         totalDonations: 0,
         isAvailable: true,
         location: {
