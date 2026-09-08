@@ -14,6 +14,7 @@ export interface UserProfile {
   medicalHistory?: string;
   lastDonation?: string | Date | any;     // allow Firestore Timestamp
   totalDonations: number;
+  activeDonationId?: string | null;
   isAvailable: boolean;
   bloodStatus?: 'Available' | 'Unavailable' | 'Unknown';   // used in dashboard
   nextAvailableDate?: string | Date | any;                 // used for 3-month cooldown

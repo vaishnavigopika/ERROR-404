@@ -1,282 +1,270 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { BLOOD_TYPES } from '@/lib/bloodCompatibility'; // Make sure this export exists
-import { Heart, ArrowLeft } from 'lucide-react';
+import { BLOOD_TYPES, BloodType } from '@/lib/bloodCompatibility';
+import { Heart, ArrowLeft, AlertCircle, Clock } from 'lucide-react';
 import Link from 'next/link';
+
+function getTodayDate(): string {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
 
 export default function NewRequestPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { toast } = useToast();
-
   const [loading, setLoading] = useState(false);
+  const [checkingProfile, setCheckingProfile] = useState(true);
+  const [profileExists, setProfileExists] = useState(false);
+
   const [formData, setFormData] = useState({
     bloodType: '',
     quantity: '1',
-    urgency: 'medium' as const,
+    urgency: 'medium' as 'low' | 'medium' | 'high' | 'critical',
     reason: '',
-    requiredDate: new Date().toISOString().split('T')[0],
+    requiredDate: getTodayDate(),
+    requiredTimeStart: '09:00',
+    requiredTimeEnd: '12:00',
   });
 
-  const minDate = new Date().toISOString().split('T')[0]; // Today or later
+  const minDate = getTodayDate();
 
-  const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  ) => {
+  useEffect(() => {
+    const checkUserProfile = async () => {
+      if (authLoading) return;
+      if (!user?.uid) {
+        setCheckingProfile(false);
+        setProfileExists(false);
+        return;
+      }
+
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (!snap.exists()) {
+          setProfileExists(false);
+          toast({
+            title: 'Profile Not Found',
+            description: 'Your user profile could not be found.',
+            variant: 'destructive',
+          });
+          return;
+        }
+        setProfileExists(true);
+      } catch (error) {
+        console.error('Error checking user profile:', error);
+        setProfileExists(false);
+        toast({
+          title: 'Error',
+          description: 'Could not verify your user profile.',
+          variant: 'destructive',
+        });
+      } finally {
+        setCheckingProfile(false);
+      }
+    };
+
+    checkUserProfile();
+  }, [user?.uid, authLoading, toast]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSelectChange = (name: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const isFormValid = 
-    formData.bloodType &&
-    parseInt(formData.quantity) >= 1 &&
-    formData.reason.trim().length > 10 &&
-    formData.requiredDate >= minDate;
+  const isValidQuantity = Number(formData.quantity) >= 1 && Number(formData.quantity) <= 10;
+  const isValidReason = formData.reason.trim().length >= 10;
+  const isValidDate = Boolean(formData.requiredDate) && formData.requiredDate >= minDate;
+  const isValidTimeWindow = formData.requiredTimeStart < formData.requiredTimeEnd;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!user?.uid) {
-      toast({
-        title: "Authentication Required",
-        description: "Please sign in to create a request",
-        variant: "destructive",
-      });
+      toast({ title: 'Authentication Required', description: 'Please sign in to create a request.', variant: 'destructive' });
       return;
     }
-
-    if (!formData.bloodType) {
-      toast({
-        title: "Missing Field",
-        description: "Please select a blood type",
-        variant: "destructive",
-      });
+    if (!profileExists) {
+      toast({ title: 'Profile Required', description: 'A registered user profile is required to create a blood request.', variant: 'destructive' });
       return;
     }
-
-    if (new Date(formData.requiredDate) < new Date()) {
-      toast({
-        title: "Invalid Date",
-        description: "Required date cannot be in the past",
-        variant: "destructive",
-      });
+    if (!formData.bloodType || !BLOOD_TYPES.includes(formData.bloodType as BloodType)) {
+      toast({ title: 'Missing Blood Type', description: 'Please select a valid blood type.', variant: 'destructive' });
+      return;
+    }
+    if (!isValidQuantity) {
+      toast({ title: 'Invalid Quantity', description: 'Units needed must be between 1 and 10.', variant: 'destructive' });
+      return;
+    }
+    if (!isValidReason) {
+      toast({ title: 'Reason Too Short', description: 'Please provide at least 10 characters explaining your request.', variant: 'destructive' });
+      return;
+    }
+    if (!isValidDate) {
+      toast({ title: 'Invalid Date', description: 'Required date cannot be before today.', variant: 'destructive' });
+      return;
+    }
+    if (!isValidTimeWindow) {
+      toast({ title: 'Invalid Time Window', description: 'The required start time must be earlier than the end time.', variant: 'destructive' });
       return;
     }
 
     setLoading(true);
-
     try {
+      const quantity = Number(formData.quantity);
       const bloodRequest = {
         recipientId: user.uid,
-        bloodType: formData.bloodType,
-        quantity: parseInt(formData.quantity),
+        bloodType: formData.bloodType as BloodType,
+        unitsNeeded: quantity,
+        quantity,
+        unitsReceivedOutside: 0,
         urgency: formData.urgency,
         reason: formData.reason.trim(),
         requiredDate: formData.requiredDate,
-        status: 'open',
+        requiredTimeStart: formData.requiredTimeStart,
+        requiredTimeEnd: formData.requiredTimeEnd,
+        status: 'open' as const,
         matchedDonors: [],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
 
-      await addDoc(collection(db, 'bloodRequests'), bloodRequest);
+      const requestRef = await addDoc(collection(db, 'bloodRequests'), bloodRequest);
+      console.log('Blood request created:', requestRef.id);
 
-      toast({
-        title: "Request Created",
-        description: "Your blood request has been posted successfully.",
-      });
-
+      toast({ title: 'Request Created', description: 'Your blood request has been posted successfully.' });
       router.push('/dashboard/requests');
-      router.refresh(); // Optional: force refresh to show the new request immediately
     } catch (error: any) {
       console.error('Error creating request:', error);
       toast({
-        title: "Creation Failed",
-        description: error.message || "Could not create blood request. Please try again.",
-        variant: "destructive",
+        title: 'Creation Failed',
+        description: error?.message || 'Could not create blood request. Please try again.',
+        variant: 'destructive',
       });
     } finally {
       setLoading(false);
     }
   };
 
+  if (checkingProfile || authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center space-y-4">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-muted-foreground">Checking your account...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !profileExists) {
+    return (
+      <div className="p-6 md:p-8 max-w-2xl mx-auto">
+        <Card className="border-border">
+          <CardContent className="pt-12 pb-12 text-center">
+            <AlertCircle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Request Creation Unavailable</h2>
+            <p className="text-muted-foreground mb-6">
+              Please sign in with a registered BloodConnect account before creating a blood request.
+            </p>
+            <Button asChild variant="outline">
+              <Link href="/dashboard/requests">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Requests
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 md:p-8 space-y-8 max-w-2xl mx-auto">
       <div className="space-y-2">
-        <Link
-          href="/dashboard/requests"
-          className="inline-flex items-center gap-2 text-primary hover:underline"
-        >
+        <Link href="/dashboard/requests" className="inline-flex items-center gap-2 text-primary hover:underline">
           <ArrowLeft className="w-4 h-4" />
           Back to Requests
         </Link>
         <h1 className="text-3xl font-bold tracking-tight">Create Blood Request</h1>
-        <p className="text-muted-foreground">
-          Share the details of the blood you need
-        </p>
+        <p className="text-muted-foreground">Share the details of the blood you need so compatible donors can find your request.</p>
       </div>
 
       <Card className="border-border shadow-sm">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Heart className="w-5 h-5 text-primary" />
-            Request Information
-          </CardTitle>
-          <CardDescription>
-            Fill in the details so compatible donors can find and help you
-          </CardDescription>
+          <CardTitle className="flex items-center gap-2"><Heart className="w-5 h-5 text-primary" />Request Information</CardTitle>
+          <CardDescription>Set the amount needed and when the recipient/hospital needs the blood.</CardDescription>
         </CardHeader>
-
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Blood Type */}
+            <div className="grid sm:grid-cols-2 gap-5">
+              <div className="space-y-2">
+                <Label>Blood Type Needed</Label>
+                <Select value={formData.bloodType} onValueChange={(value) => setFormData((prev) => ({ ...prev, bloodType: value }))}>
+                  <SelectTrigger><SelectValue placeholder="Select blood type" /></SelectTrigger>
+                  <SelectContent>{BLOOD_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="quantity">Units Needed</Label>
+                <Input id="quantity" name="quantity" type="number" min="1" max="10" value={formData.quantity} onChange={handleInputChange} />
+              </div>
+            </div>
+
             <div className="space-y-2">
-              <Label htmlFor="bloodType">Blood Type Required *</Label>
-              <Select
-                value={formData.bloodType}
-                onValueChange={(value) => handleSelectChange('bloodType', value)}
-                required
-              >
-                <SelectTrigger id="bloodType">
-                  <SelectValue placeholder="Select blood type" />
-                </SelectTrigger>
+              <Label>Urgency</Label>
+              <Select value={formData.urgency} onValueChange={(value: any) => setFormData((prev) => ({ ...prev, urgency: value }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {BLOOD_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {type}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="critical">Critical</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            {/* Quantity & Urgency */}
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label htmlFor="quantity">Units Needed *</Label>
-                <Input
-                  id="quantity"
-                  name="quantity"
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={formData.quantity}
-                  onChange={handleInputChange}
-                  required
-                />
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="reason">Reason for Request</Label>
+              <Textarea id="reason" name="reason" rows={4} placeholder="Briefly explain why blood is needed..." value={formData.reason} onChange={handleInputChange} />
+              <p className="text-xs text-muted-foreground">Minimum 10 characters.</p>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="urgency">Urgency Level *</Label>
-                <Select
-                  value={formData.urgency}
-                  onValueChange={(value) => handleSelectChange('urgency', value)}
-                  required
-                >
-                  <SelectTrigger id="urgency">
-                    <SelectValue placeholder="Select urgency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                    <SelectItem value="critical">Critical</SelectItem>
-                  </SelectContent>
-                </Select>
+            <div className="rounded-lg border border-border p-4 space-y-4">
+              <div className="flex items-center gap-2 font-medium"><Clock className="w-4 h-4 text-primary" />When is the blood needed?</div>
+              <p className="text-sm text-muted-foreground">This is the recipient/hospital's required time window. Donors do not choose this schedule.</p>
+              <div className="grid sm:grid-cols-3 gap-4">
+                <div className="space-y-2 sm:col-span-1">
+                  <Label htmlFor="requiredDate">Required Date</Label>
+                  <Input id="requiredDate" name="requiredDate" type="date" min={minDate} value={formData.requiredDate} onChange={handleInputChange} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="requiredTimeStart">From</Label>
+                  <Input id="requiredTimeStart" name="requiredTimeStart" type="time" value={formData.requiredTimeStart} onChange={handleInputChange} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="requiredTimeEnd">Until</Label>
+                  <Input id="requiredTimeEnd" name="requiredTimeEnd" type="time" value={formData.requiredTimeEnd} onChange={handleInputChange} />
+                </div>
               </div>
             </div>
 
-            {/* Required Date */}
-            <div className="space-y-2">
-              <Label htmlFor="requiredDate">Date Needed By *</Label>
-              <Input
-                id="requiredDate"
-                name="requiredDate"
-                type="date"
-                min={minDate}
-                value={formData.requiredDate}
-                onChange={handleInputChange}
-                required
-              />
-            </div>
-
-            {/* Reason */}
-            <div className="space-y-2">
-              <Label htmlFor="reason">Reason for Request *</Label>
-              <Textarea
-                id="reason"
-                name="reason"
-                placeholder="e.g., Major surgery, thalassemia treatment, accident..."
-                value={formData.reason}
-                onChange={handleInputChange}
-                className="min-h-[100px]"
-                required
-              />
-            </div>
-
-            {/* Buttons */}
-            <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t">
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1 sm:flex-none sm:w-32"
-                asChild
-                disabled={loading}
-              >
-                <Link href="/dashboard/requests">Cancel</Link>
-              </Button>
-
-              <Button
-                type="submit"
-                disabled={loading || !isFormValid}
-                className="flex-1 bg-primary hover:bg-primary/90"
-              >
-                {loading ? (
-                  <span className="flex items-center gap-2">
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                    Creating...
-                  </span>
-                ) : (
-                  'Create Request'
-                )}
-              </Button>
-            </div>
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? 'Creating Request...' : 'Create Blood Request'}
+            </Button>
           </form>
-        </CardContent>
-      </Card>
-
-      {/* Info box */}
-      <Card className="bg-muted/40 border-border">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Important Notes</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-2">
-          <p>• Your request will be visible to compatible donors in your network.</p>
-          <p>• Donors can contact you directly via messages to coordinate.</p>
-          <p>• Always follow proper medical protocols and screening for blood transfusions.</p>
-          <p>• You can edit or cancel this request from the main requests page.</p>
         </CardContent>
       </Card>
     </div>
