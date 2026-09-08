@@ -42,6 +42,7 @@ import {
 } from 'lucide-react';
 
 import { offerBloodDonation } from '@/lib/services/donationService';
+import { isUserEligibleToDonate } from '@/lib/services/userService';
 import { toast } from 'sonner';
 import {
   getCompatibleRecipients,
@@ -197,6 +198,8 @@ export default function RequestsPage() {
 
   const [donationUnavailableUntil, setDonationUnavailableUntil] =
     useState<Date | null>(null);
+  const [donationUnavailableModalOpen, setDonationUnavailableModalOpen] =
+    useState(false);
 
   const hasOwnRequests = ownRequests.length > 0;
   const hasDonorRequests = donorRequests.length > 0;
@@ -326,59 +329,166 @@ export default function RequestsPage() {
   }, [user]);
 
   const handleOfferBlood = async (request: RequestWithScheduling) => {
-    if (!user) {
-      toast.error('Please sign in to offer blood.');
-      return;
-    }
-
-    if (request.recipientId === user.uid) {
-      toast.error('You cannot offer blood to your own request.');
-      return;
-    }
-
-    const nextEligibleDate =
-      getNextEligibleDonationDate(profile);
-
-    if (nextEligibleDate && nextEligibleDate.getTime() > Date.now()) {
-      setDonationUnavailableUntil(nextEligibleDate);
-      return;
-    }
-
-    if (activeDonationId) {
-      toast.error(
-        'You already have an active donation. Complete or cancel it before offering blood again.'
-      );
-      return;
-    }
-
-    if (offeringId) return;
-
-    if (isRequestExpired(request)) {
-      toast.error('This blood request has expired.');
-      return;
-    }
-
-    setOfferingId(request.id);
-
     try {
-      const result = await offerBloodDonation({
-        donorId: user.uid,
-        requestId: request.id,
-        units: 1,
-        // This is the offer timestamp only. The service no longer treats
-        // this as the scheduled donation date.
-        date: new Date(),
-      });
+      if (!user) {
+        toast.error('Please sign in to offer blood.');
+        return;
+      }
 
-      setActiveDonationId(result.donationId);
-      toast.success('Blood offer submitted successfully!');
+      if (request.recipientId === user.uid) {
+        toast.error('You cannot offer blood to your own request.');
+        return;
+      }
 
-      // Refresh from Firestore so the quantity/status is authoritative.
-      await loadRequests();
-    } catch (error: any) {
-      toast.error(error?.message || 'Failed to offer blood. Please try again.');
-    } finally {
+      if (offeringId) return;
+
+      if (isRequestExpired(request)) {
+        toast.error('This blood request has expired.');
+        return;
+      }
+
+      // Check the same eligibility function used by the donation service.
+      // If the donor is in the waiting period, NEVER call offerBloodDonation.
+      let eligible = false;
+
+      try {
+        eligible = await isUserEligibleToDonate(user.uid);
+      } catch {
+        toast.error(
+          'Unable to verify your donation eligibility. Please try again.'
+        );
+        return;
+      }
+
+      if (!eligible) {
+        let nextEligibleDate = getNextEligibleDonationDate(profile);
+
+        // If the profile does not contain the date, derive it from the
+        // latest completed donation.
+        if (!nextEligibleDate) {
+          try {
+            const donationSnapshot = await getDocs(
+              query(
+                collection(db, 'donations'),
+                where('donorId', '==', user.uid)
+              )
+            );
+
+            const completedDates = donationSnapshot.docs
+              .map((donationDoc) => donationDoc.data())
+              .filter((donation) => donation.status === 'completed')
+              .map((donation) =>
+                toValidDate(
+                  donation.completedAt ??
+                    donation.donationDate ??
+                    donation.createdAt
+                )
+              )
+              .filter((date): date is Date => Boolean(date))
+              .sort((a, b) => b.getTime() - a.getTime());
+
+            if (completedDates[0]) {
+              nextEligibleDate = new Date(completedDates[0]);
+              nextEligibleDate.setMonth(
+                nextEligibleDate.getMonth() + 3
+              );
+            }
+          } catch {
+            // The eligibility result is already authoritative.
+          }
+        }
+
+        setDonationUnavailableUntil(nextEligibleDate);
+        setDonationUnavailableModalOpen(true);
+        return;
+      }
+
+      if (activeDonationId) {
+        toast.error(
+          'You already have an active donation. Complete or cancel it before offering blood again.'
+        );
+        return;
+      }
+
+      setOfferingId(request.id);
+
+      try {
+        const result = await offerBloodDonation({
+          donorId: user.uid,
+          requestId: request.id,
+          units: 1,
+          date: new Date(),
+        });
+
+        setActiveDonationId(result.donationId);
+        toast.success('Blood offer submitted successfully!');
+        await loadRequests();
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+              ? error
+              : '';
+
+        // Backend is authoritative. Convert its eligibility error into
+        // the same normal popup instead of showing a red Next.js overlay.
+        if (
+          message
+            .toLowerCase()
+            .includes('currently unavailable for blood donation')
+        ) {
+          let nextEligibleDate = getNextEligibleDonationDate(profile);
+
+          if (!nextEligibleDate) {
+            try {
+              const donationSnapshot = await getDocs(
+                query(
+                  collection(db, 'donations'),
+                  where('donorId', '==', user.uid)
+                )
+              );
+
+              const completedDates = donationSnapshot.docs
+                .map((donationDoc) => donationDoc.data())
+                .filter((donation) => donation.status === 'completed')
+                .map((donation) =>
+                  toValidDate(
+                    donation.completedAt ??
+                      donation.donationDate ??
+                      donation.createdAt
+                  )
+                )
+                .filter((date): date is Date => Boolean(date))
+                .sort((a, b) => b.getTime() - a.getTime());
+
+              if (completedDates[0]) {
+                nextEligibleDate = new Date(completedDates[0]);
+                nextEligibleDate.setMonth(
+                  nextEligibleDate.getMonth() + 3
+                );
+              }
+            } catch {
+              // Keep the popup even if the historical date cannot be read.
+            }
+          }
+
+          setDonationUnavailableUntil(nextEligibleDate);
+          setDonationUnavailableModalOpen(true);
+          return;
+        }
+
+        toast.error(
+          message || 'Failed to offer blood. Please try again.'
+        );
+      } finally {
+        setOfferingId(null);
+      }
+    } catch {
       setOfferingId(null);
+      toast.error(
+        'Something went wrong while processing your blood offer.'
+      );
     }
   };
 
@@ -433,6 +543,7 @@ export default function RequestsPage() {
             getNextEligibleDonationDate(profile);
 
           const currentlyUnavailable =
+            donationUnavailableModalOpen ||
             Boolean(nextEligibleDate) &&
             nextEligibleDate!.getTime() > Date.now();
 
@@ -777,7 +888,7 @@ export default function RequestsPage() {
                         <Button
                           className={`flex-1 ${
                             donorUnavailable
-                              ? 'bg-muted text-muted-foreground border border-border hover:bg-muted/80'
+                              ? '!bg-pink-100 !text-pink-400 !border-pink-200 hover:!bg-pink-100'
                               : 'bg-primary text-primary-foreground hover:bg-primary/90'
                           }`}
                           onClick={() => handleOfferBlood(request)}
@@ -836,11 +947,14 @@ export default function RequestsPage() {
         </Card>
       )}
 
-      {donationUnavailableUntil && (
+      {donationUnavailableModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="presentation"
-          onClick={() => setDonationUnavailableUntil(null)}
+          onClick={() => {
+            setDonationUnavailableModalOpen(false);
+            setDonationUnavailableUntil(null);
+          }}
         >
           <div
             role="dialog"
@@ -867,13 +981,20 @@ export default function RequestsPage() {
                   waiting period.
                 </p>
 
-                <p className="text-sm text-muted-foreground mt-2 leading-6">
-                  You will be eligible to donate again on{' '}
-                  <strong className="text-foreground">
-                    {formatDate(donationUnavailableUntil)}
-                  </strong>
-                  .
-                </p>
+                {donationUnavailableUntil ? (
+                  <p className="text-sm text-muted-foreground mt-2 leading-6">
+                    You will be eligible to donate again on{' '}
+                    <strong className="text-foreground">
+                      {formatDate(donationUnavailableUntil)}
+                    </strong>
+                    .
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground mt-2 leading-6">
+                    You are still within the required waiting period.
+                    Please check your donation history for your eligibility date.
+                  </p>
+                )}
 
                 <p className="text-sm text-muted-foreground mt-2">
                   You can use the Offer Blood option again after this date.
@@ -884,7 +1005,10 @@ export default function RequestsPage() {
             <div className="flex justify-end mt-6">
               <Button
                 type="button"
-                onClick={() => setDonationUnavailableUntil(null)}
+                onClick={() => {
+            setDonationUnavailableModalOpen(false);
+            setDonationUnavailableUntil(null);
+          }}
               >
                 Understood
               </Button>

@@ -1,7 +1,7 @@
 import React from "react"
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
-import { Providers } from './providers'  // ← Import the wrapper
+import { Providers } from './providers'
 import './globals.css'
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -9,24 +9,12 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: 'BloodConnect - Blood Donation Management',
-  description: 'College blood donation management platform connecting donors and recipients',
-  generator: 'v0.app',
+  description:
+    'College blood donation management platform connecting donors and recipients',
+
   icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-    apple: '/apple-icon.png',
+    icon: '/bloodconnect-logo.svg',
+    apple: '/bloodconnect-logo.svg',
   },
 }
 
@@ -37,8 +25,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`font-sans antialiased`}>
-        <Providers>{children}</Providers>  {/* ← Use the wrapper */}
+      <body className="font-sans antialiased">
+        <Providers>{children}</Providers>
       </body>
     </html>
   )
