@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { Suspense } from 'react';
 
 import {
   doc,
@@ -34,6 +33,7 @@ import {
 } from 'lucide-react';
 
 import { useToast } from '@/hooks/use-toast';
+import { isUserEligibleToDonate } from '@/lib/services/userService';
 
 
 // ============================================================
@@ -50,14 +50,21 @@ type YesNo = 'yes' | 'no' | '';
 function OnboardingContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+
   const { user, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
-  const role = searchParams.get('role') || 'donor';
+  const role =
+    searchParams.get('role') || 'donor';
 
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
-  const [checkingProfile, setCheckingProfile] = useState(true);
+  const [checkingProfile, setCheckingProfile] =
+    useState(true);
+
+  // ============================================================
+  // FORM DATA
+  // ============================================================
 
   const [formData, setFormData] = useState({
     age: '',
@@ -71,8 +78,12 @@ function OnboardingContent() {
     hivAids: '' as YesNo,
     hepatitis: '' as YesNo,
     seriousInfectiousDisease: '' as YesNo,
+
     recentTattooPiercingMakeup: '' as YesNo,
+    tattooPiercingMakeupDate: '',
+
     recentDentalTreatment: '' as YesNo,
+    dentalTreatmentDate: '',
   });
 
 
@@ -90,8 +101,14 @@ function OnboardingContent() {
 
     const checkProfile = async () => {
       try {
-        const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
+        const userRef = doc(
+          db,
+          'users',
+          user.uid
+        );
+
+        const userSnap =
+          await getDoc(userRef);
 
         if (!userSnap.exists()) {
           toast({
@@ -105,11 +122,14 @@ function OnboardingContent() {
           return;
         }
 
-        const data = userSnap.data();
+        const data =
+          userSnap.data();
 
-        // If onboarding was already completed,
+        // If onboarding has already been completed,
         // don't make the user fill it again.
-        if (data.onboardingCompleted === true) {
+        if (
+          data.onboardingCompleted === true
+        ) {
           router.replace('/dashboard');
           return;
         }
@@ -146,7 +166,10 @@ function OnboardingContent() {
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
-    const { name, value } = e.target;
+    const {
+      name,
+      value,
+    } = e.target;
 
     setFormData((prev) => ({
       ...prev,
@@ -167,11 +190,32 @@ function OnboardingContent() {
       ...prev,
       [field]: value,
 
-      // If the user selects "No" for previous donation,
-      // remove the previously entered date.
-      ...(field === 'donatedBefore' && value === 'no'
+      // Clear previous donation date
+      // when the user selects No.
+      ...(field === 'donatedBefore' &&
+      value === 'no'
         ? {
             lastDonationDate: '',
+          }
+        : {}),
+
+      // Clear tattoo/piercing date
+      // when the user selects No.
+      ...(field ===
+        'recentTattooPiercingMakeup' &&
+      value === 'no'
+        ? {
+            tattooPiercingMakeupDate: '',
+          }
+        : {}),
+
+      // Clear dental date
+      // when the user selects No.
+      ...(field ===
+        'recentDentalTreatment' &&
+      value === 'no'
+        ? {
+            dentalTreatmentDate: '',
           }
         : {}),
     }));
@@ -179,7 +223,7 @@ function OnboardingContent() {
 
 
   // ============================================================
-  // VALIDATE BASIC ELIGIBILITY
+  // VALIDATE STEP ONE
   // ============================================================
 
   const validateStepOne = () => {
@@ -189,7 +233,8 @@ function OnboardingContent() {
     if (!formData.age.trim()) {
       toast({
         title: 'Age Required',
-        description: 'Please enter your age.',
+        description:
+          'Please enter your age.',
         variant: 'destructive',
       });
 
@@ -203,7 +248,8 @@ function OnboardingContent() {
     ) {
       toast({
         title: 'Invalid Age',
-        description: 'Please enter a valid age.',
+        description:
+          'Please enter a valid age.',
         variant: 'destructive',
       });
 
@@ -213,7 +259,8 @@ function OnboardingContent() {
     if (!formData.weight.trim()) {
       toast({
         title: 'Weight Required',
-        description: 'Please enter your weight.',
+        description:
+          'Please enter your weight.',
         variant: 'destructive',
       });
 
@@ -226,7 +273,8 @@ function OnboardingContent() {
     ) {
       toast({
         title: 'Invalid Weight',
-        description: 'Please enter a valid weight.',
+        description:
+          'Please enter a valid weight.',
         variant: 'destructive',
       });
 
@@ -258,6 +306,22 @@ function OnboardingContent() {
       return false;
     }
 
+    if (
+      formData.lastDonationDate &&
+      new Date(
+        formData.lastDonationDate
+      ).getTime() > Date.now()
+    ) {
+      toast({
+        title: 'Invalid Donation Date',
+        description:
+          'The last donation date cannot be in the future.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
     if (!formData.cannotDonate) {
       toast({
         title: 'Answer Required',
@@ -274,7 +338,7 @@ function OnboardingContent() {
 
 
   // ============================================================
-  // VALIDATE MEDICAL HISTORY
+  // VALIDATE STEP TWO
   // ============================================================
 
   const validateStepTwo = () => {
@@ -290,17 +354,20 @@ function OnboardingContent() {
           'Please answer the hepatitis question.',
       },
       {
-        value: formData.seriousInfectiousDisease,
+        value:
+          formData.seriousInfectiousDisease,
         message:
           'Please answer the infectious disease question.',
       },
       {
-        value: formData.recentTattooPiercingMakeup,
+        value:
+          formData.recentTattooPiercingMakeup,
         message:
           'Please answer the tattoo, piercing, or permanent makeup question.',
       },
       {
-        value: formData.recentDentalTreatment,
+        value:
+          formData.recentDentalTreatment,
         message:
           'Please answer the dental treatment question.',
       },
@@ -310,12 +377,78 @@ function OnboardingContent() {
       if (!question.value) {
         toast({
           title: 'Answer Required',
-          description: question.message,
+          description:
+            question.message,
           variant: 'destructive',
         });
 
         return false;
       }
+    }
+
+    // Tattoo / piercing date
+    if (
+      formData.recentTattooPiercingMakeup ===
+        'yes' &&
+      !formData.tattooPiercingMakeupDate
+    ) {
+      toast({
+        title: 'Date Required',
+        description:
+          'Please enter the date of your recent tattoo, piercing, or permanent makeup.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    // Dental date
+    if (
+      formData.recentDentalTreatment ===
+        'yes' &&
+      !formData.dentalTreatmentDate
+    ) {
+      toast({
+        title: 'Date Required',
+        description:
+          'Please enter the date of your recent dental treatment.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    // Dates cannot be in the future.
+    if (
+      formData.tattooPiercingMakeupDate &&
+      new Date(
+        formData.tattooPiercingMakeupDate
+      ).getTime() > Date.now()
+    ) {
+      toast({
+        title: 'Invalid Date',
+        description:
+          'The tattoo/piercing date cannot be in the future.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    if (
+      formData.dentalTreatmentDate &&
+      new Date(
+        formData.dentalTreatmentDate
+      ).getTime() > Date.now()
+    ) {
+      toast({
+        title: 'Invalid Date',
+        description:
+          'The dental treatment date cannot be in the future.',
+        variant: 'destructive',
+      });
+
+      return false;
     }
 
     return true;
@@ -378,6 +511,10 @@ function OnboardingContent() {
         user.uid
       );
 
+      // ========================================================
+      // SAVE ALL ONBOARDING ANSWERS
+      // ========================================================
+
       await updateDoc(userRef, {
         onboarding: {
           age: Number(formData.age),
@@ -402,27 +539,73 @@ function OnboardingContent() {
             formData.hepatitis === 'yes',
 
           seriousInfectiousDisease:
-            formData.seriousInfectiousDisease === 'yes',
+            formData.seriousInfectiousDisease ===
+            'yes',
 
           recentTattooPiercingMakeup:
-            formData.recentTattooPiercingMakeup === 'yes',
+            formData.recentTattooPiercingMakeup ===
+            'yes',
+
+          tattooPiercingMakeupDate:
+            formData.recentTattooPiercingMakeup ===
+              'yes'
+              ? formData.tattooPiercingMakeupDate
+              : null,
 
           recentDentalTreatment:
-            formData.recentDentalTreatment === 'yes',
+            formData.recentDentalTreatment ===
+            'yes',
+
+          dentalTreatmentDate:
+            formData.recentDentalTreatment ===
+              'yes'
+              ? formData.dentalTreatmentDate
+              : null,
         },
 
         onboardingCompleted: true,
 
-        updatedAt: serverTimestamp(),
+        updatedAt:
+          serverTimestamp(),
       });
+
+
+      // ========================================================
+      // IMMEDIATELY CALCULATE ELIGIBILITY
+      // ========================================================
+      //
+      // This is important.
+      //
+      // It makes the saved onboarding answers immediately
+      // affect:
+      //
+      //   isAvailable
+      //   bloodStatus
+      //   nextEligibleDonationDate
+      //   donationEligibilityStatus
+      //   donationEligibilityReason
+      //
+      // So a new donor who selected "Yes" for a recent
+      // piercing will immediately become unavailable.
+      //
+
+      await isUserEligibleToDonate(
+        user.uid
+      );
+
+
+      // ========================================================
+      // SUCCESS
+      // ========================================================
 
       toast({
         title: 'Onboarding Complete',
         description:
-          'Your information has been saved successfully.',
+          'Your health information has been saved successfully.',
       });
 
       router.replace('/dashboard');
+
     } catch (error: any) {
       console.error(
         'Onboarding save error:',
@@ -436,6 +619,7 @@ function OnboardingContent() {
           'There was a problem saving your information.',
         variant: 'destructive',
       });
+
     } finally {
       setSaving(false);
     }
@@ -536,24 +720,19 @@ function OnboardingContent() {
 
       <Card className="border-border max-w-2xl w-full">
 
-        {/* ================================================== */}
-        {/* HEADER */}
-        {/* ================================================== */}
+        {/* ======================================================
+            HEADER
+        ====================================================== */}
 
         <CardHeader className="text-center space-y-4">
 
           <div className="flex justify-center">
-
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-
               <Heart className="w-7 h-7 text-primary fill-primary" />
-
             </div>
-
           </div>
 
           <div>
-
             <CardTitle className="text-2xl">
               Blood Donation Health Screening
             </CardTitle>
@@ -563,7 +742,6 @@ function OnboardingContent() {
               honestly to help us understand your
               eligibility.
             </CardDescription>
-
           </div>
 
           {/* PROGRESS */}
@@ -601,9 +779,9 @@ function OnboardingContent() {
         </CardHeader>
 
 
-        {/* ================================================== */}
-        {/* STEP 1 */}
-        {/* ================================================== */}
+        {/* ======================================================
+            STEP 1
+        ====================================================== */}
 
         {step === 1 && (
           <CardContent>
@@ -611,7 +789,6 @@ function OnboardingContent() {
             <div className="space-y-6">
 
               <div>
-
                 <h2 className="text-lg font-semibold text-foreground">
                   🩸 Basic Eligibility
                 </h2>
@@ -619,7 +796,6 @@ function OnboardingContent() {
                 <p className="text-sm text-muted-foreground mt-1">
                   Please provide your basic eligibility information.
                 </p>
-
               </div>
 
 
@@ -769,12 +945,27 @@ function OnboardingContent() {
         )}
 
 
-        {/* ================================================== */}
-        {/* STEP 2 */}
-        {/* ================================================== */}
+        {/* ======================================================
+            STEP 2
+        ====================================================== */}
 
         {step === 2 && (
           <CardContent>
+
+            {/* ==================================================
+                SIMPLE BACK AT TOP
+            ================================================== */}
+
+            <button
+              type="button"
+              onClick={handleBack}
+              disabled={saving}
+              className="mb-6 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Back
+            </button>
+
 
             <form
               onSubmit={handleSubmit}
@@ -782,7 +973,6 @@ function OnboardingContent() {
             >
 
               <div>
-
                 <h2 className="text-lg font-semibold text-foreground">
                   🦠 Infections &amp; Medical History
                 </h2>
@@ -790,7 +980,6 @@ function OnboardingContent() {
                 <p className="text-sm text-muted-foreground mt-1">
                   Please answer each question before continuing.
                 </p>
-
               </div>
 
 
@@ -891,6 +1080,41 @@ function OnboardingContent() {
 
                 </div>
 
+
+                {/* Tattoo date appears only when Yes */}
+
+                {formData.recentTattooPiercingMakeup ===
+                  'yes' && (
+                  <div className="space-y-2 pt-1">
+
+                    <Label htmlFor="tattooPiercingMakeupDate">
+                      When did you receive the tattoo, piercing, or permanent makeup? *
+                    </Label>
+
+                    <Input
+                      id="tattooPiercingMakeupDate"
+                      name="tattooPiercingMakeupDate"
+                      type="date"
+                      value={
+                        formData.tattooPiercingMakeupDate
+                      }
+                      onChange={handleInputChange}
+                      disabled={saving}
+                      max={
+                        new Date()
+                          .toISOString()
+                          .split('T')[0]
+                      }
+                    />
+
+                    <p className="text-xs text-muted-foreground">
+                      Your donation eligibility will be
+                      evaluated based on this date.
+                    </p>
+
+                  </div>
+                )}
+
               </div>
 
 
@@ -916,29 +1140,56 @@ function OnboardingContent() {
 
                 </div>
 
+
+                {/* Dental date appears only when Yes */}
+
+                {formData.recentDentalTreatment ===
+                  'yes' && (
+                  <div className="space-y-2 pt-1">
+
+                    <Label htmlFor="dentalTreatmentDate">
+                      When did you undergo the dental treatment? *
+                    </Label>
+
+                    <Input
+                      id="dentalTreatmentDate"
+                      name="dentalTreatmentDate"
+                      type="date"
+                      value={
+                        formData.dentalTreatmentDate
+                      }
+                      onChange={handleInputChange}
+                      disabled={saving}
+                      max={
+                        new Date()
+                          .toISOString()
+                          .split('T')[0]
+                      }
+                    />
+
+                    <p className="text-xs text-muted-foreground">
+                      Your donation eligibility will be
+                      evaluated based on this date.
+                    </p>
+
+                  </div>
+                )}
+
               </div>
 
 
-              {/* BUTTONS */}
+              {/* ==================================================
+                  COMPLETE ONBOARDING - CENTERED
+              ================================================== */}
 
-              <div className="flex flex-col sm:flex-row gap-3 pt-2">
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleBack}
-                  disabled={saving}
-                  className="w-full"
-                >
-                  <ChevronLeft className="mr-2 h-4 w-4" />
-                  Back
-                </Button>
+              <div className="flex justify-center pt-4">
 
                 <Button
                   type="submit"
                   disabled={saving}
-                  className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+                  className="min-w-[220px] bg-primary text-primary-foreground hover:bg-primary/90"
                 >
+
                   {saving ? (
                     <span className="flex items-center gap-2">
 
@@ -956,6 +1207,7 @@ function OnboardingContent() {
 
                     </span>
                   )}
+
                 </Button>
 
               </div>
