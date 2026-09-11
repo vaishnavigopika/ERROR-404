@@ -1,149 +1,458 @@
 'use client';
 
-import React from "react"
+import React from 'react';
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+
 import { useToast } from '@/hooks/use-toast';
+
 import { UserProfile } from '@/lib/types';
-import { User, MapPin, Phone, Heart } from 'lucide-react';
+
+import {
+  User,
+  MapPin,
+  Heart,
+} from 'lucide-react';
+
 
 export default function ProfilePage() {
+
   const { user } = useAuth();
   const { toast } = useToast();
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+
+  const [userProfile, setUserProfile] =
+    useState<UserProfile | null>(null);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [saving, setSaving] =
+    useState(false);
+
+
+  // ============================================================
+  // FORM DATA
+  // ============================================================
+
   const [formData, setFormData] = useState({
+
     name: '',
+
     phoneNumber: '',
+
     college: '',
+
     year: '',
+
     medicalHistory: '',
+
     isAvailable: true,
+
     location: {
       address: '',
       latitude: 0,
       longitude: 0,
-    }
+    },
+
   });
 
+
+  // ============================================================
+  // FETCH PROFILE
+  // ============================================================
+
   useEffect(() => {
+
     const fetchProfile = async () => {
-      if (!user) return;
+
+      if (!user) {
+        setLoading(false);
+        return;
+      }
 
       try {
-        const docRef = doc(db, 'users', user.uid);
-        const docSnap = await getDoc(docRef);
+
+        const docRef =
+          doc(db, 'users', user.uid);
+
+        const docSnap =
+          await getDoc(docRef);
+
 
         if (docSnap.exists()) {
-          const profile = docSnap.data() as UserProfile;
+
+          const profile =
+            docSnap.data() as UserProfile;
+
+
           setUserProfile(profile);
+
+
+          // ----------------------------------------------------
+          // IMPORTANT:
+          // Older/newly-created users may not have all fields.
+          // Give every missing field a safe default.
+          // ----------------------------------------------------
+
           setFormData({
-            name: profile.name,
-            phoneNumber: profile.phoneNumber,
-            college: profile.college,
-            year: profile.year,
-            medicalHistory: profile.medicalHistory || '',
-            isAvailable: profile.isAvailable,
-            location: profile.location,
+
+            name:
+              profile.name || '',
+
+            // Your signup page stores "phone",
+            // while the old profile page expected "phoneNumber".
+            phoneNumber:
+              (profile as any).phoneNumber ||
+              (profile as any).phone ||
+              '',
+
+            college:
+              (profile as any).college ||
+              '',
+
+            year:
+              (profile as any).year ||
+              '',
+
+            medicalHistory:
+              (profile as any).medicalHistory ||
+              '',
+
+            isAvailable:
+              typeof profile.isAvailable === 'boolean'
+                ? profile.isAvailable
+                : true,
+
+            // ------------------------------------------------
+            // THIS FIXES:
+            // Cannot read properties of undefined
+            // (reading 'address')
+            // ------------------------------------------------
+
+            location: {
+
+              address:
+                (profile as any).location?.address ||
+                '',
+
+              latitude:
+                (profile as any).location?.latitude ||
+                0,
+
+              longitude:
+                (profile as any).location?.longitude ||
+                0,
+
+            },
+
           });
+
         }
+
       } catch (error) {
-        console.error('Error fetching profile:', error);
+
+        console.error(
+          'Error fetching profile:',
+          error
+        );
+
         toast({
-          title: "Error",
-          description: "Failed to load profile",
-          variant: "destructive"
+
+          title: 'Error',
+
+          description:
+            'Failed to load profile',
+
+          variant: 'destructive',
+
         });
+
       } finally {
+
         setLoading(false);
+
       }
+
     };
 
+
     fetchProfile();
+
   }, [user, toast]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+
+  // ============================================================
+  // INPUT HANDLER
+  // ============================================================
+
+  const handleInputChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement |
+      HTMLTextAreaElement
+    >
+  ) => {
+
+    const {
+      name,
+      value,
+    } = e.target;
+
+
+    setFormData(prev => ({
+
+      ...prev,
+
+      [name]: value,
+
+    }));
+
   };
 
-  const handleLocationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
+
+  // ============================================================
+  // LOCATION HANDLER
+  // ============================================================
+
+  const handleLocationChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+
+    const {
+      name,
+      value,
+    } = e.target;
+
+
     setFormData(prev => ({
+
       ...prev,
-      location: { ...prev.location, [name]: value }
+
+      location: {
+
+        ...prev.location,
+
+        [name]: value,
+
+      },
+
     }));
+
   };
+
+
+  // ============================================================
+  // SAVE PROFILE
+  // ============================================================
 
   const handleSave = async () => {
+
     if (!user) return;
 
     setSaving(true);
+
     try {
-      const docRef = doc(db, 'users', user.uid);
-      await updateDoc(docRef, {
-        ...formData,
-        updatedAt: new Date().toISOString(),
+
+      const docRef =
+        doc(db, 'users', user.uid);
+
+
+      await updateDoc(
+        docRef,
+        {
+
+          ...formData,
+
+          // Keep both names compatible with
+          // the signup-created profile.
+          phone:
+            formData.phoneNumber,
+
+          phoneNumber:
+            formData.phoneNumber,
+
+          updatedAt:
+            new Date().toISOString(),
+
+        }
+      );
+
+
+      // Update local profile state too
+      setUserProfile(prev => {
+
+        if (!prev) return prev;
+
+        return {
+
+          ...prev,
+
+          ...formData,
+
+          phone:
+            formData.phoneNumber,
+
+          phoneNumber:
+            formData.phoneNumber,
+
+        } as UserProfile;
+
       });
 
+
       toast({
-        title: "Success",
-        description: "Profile updated successfully!"
+
+        title: 'Success',
+
+        description:
+          'Profile updated successfully!',
+
       });
+
     } catch (error: any) {
+
+      console.error(
+        'Error updating profile:',
+        error
+      );
+
       toast({
-        title: "Error",
-        description: error.message || "Failed to update profile",
-        variant: "destructive"
+
+        title: 'Error',
+
+        description:
+          error?.message ||
+          'Failed to update profile',
+
+        variant: 'destructive',
+
       });
+
     } finally {
+
       setSaving(false);
+
     }
+
   };
 
+
+  // ============================================================
+  // LOADING
+  // ============================================================
+
   if (loading) {
+
     return (
+
       <div className="flex items-center justify-center h-screen">
+
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-foreground">Loading profile...</p>
+
+          <div
+            className="
+              w-12 h-12
+              border-4
+              border-primary
+              border-t-transparent
+              rounded-full
+              animate-spin
+              mx-auto
+              mb-4
+            "
+          />
+
+          <p className="text-foreground">
+            Loading profile...
+          </p>
+
         </div>
+
       </div>
+
     );
+
   }
 
+
+  // ============================================================
+  // MAIN PAGE
+  // ============================================================
+
   return (
+
     <div className="p-6 md:p-8 space-y-8 max-w-2xl">
+
+      {/* ====================================================== */}
+      {/* HEADER */}
+      {/* ====================================================== */}
+
       <div>
-        <h1 className="text-3xl font-bold text-foreground">My Profile</h1>
-        <p className="text-foreground/60 mt-2">Update your information and preferences</p>
+
+        <h1 className="text-3xl font-bold text-foreground">
+          My Profile
+        </h1>
+
+        <p className="text-foreground/60 mt-2">
+          Update your information and preferences
+        </p>
+
       </div>
 
+
       <div className="space-y-6">
-        {/* Personal Information */}
+
+
+        {/* ==================================================== */}
+        {/* PERSONAL INFORMATION */}
+        {/* ==================================================== */}
+
         <Card className="border-border">
+
           <CardHeader>
+
             <CardTitle className="flex items-center gap-2">
+
               <User className="w-5 h-5 text-primary" />
+
               Personal Information
+
             </CardTitle>
+
             <CardDescription>
               Your basic profile information
             </CardDescription>
+
           </CardHeader>
+
+
           <CardContent className="space-y-4">
+
+
+            {/* NAME */}
+
             <div className="space-y-2">
-              <Label htmlFor="name">Full Name</Label>
+
+              <Label htmlFor="name">
+                Full Name
+              </Label>
+
               <Input
                 id="name"
                 name="name"
@@ -151,10 +460,18 @@ export default function ProfilePage() {
                 onChange={handleInputChange}
                 className="border-border"
               />
+
             </div>
 
+
+            {/* PHONE */}
+
             <div className="space-y-2">
-              <Label htmlFor="phoneNumber">Phone Number</Label>
+
+              <Label htmlFor="phoneNumber">
+                Phone Number
+              </Label>
+
               <Input
                 id="phoneNumber"
                 name="phoneNumber"
@@ -163,43 +480,99 @@ export default function ProfilePage() {
                 onChange={handleInputChange}
                 className="border-border"
               />
+
             </div>
 
+
+            {/* EMAIL */}
+
             <div className="space-y-2">
-              <Label htmlFor="email">Email (Read-only)</Label>
+
+              <Label htmlFor="email">
+                Email (Read-only)
+              </Label>
+
               <Input
+                id="email"
                 value={userProfile?.email || ''}
                 disabled
                 className="border-border bg-muted"
               />
+
             </div>
+
+
+            {/* BLOOD TYPE */}
 
             <div className="space-y-2">
-              <Label htmlFor="bloodType">Blood Type (Read-only)</Label>
+
+              <Label htmlFor="bloodType">
+                Blood Type (Read-only)
+              </Label>
+
               <div className="flex items-center gap-2">
-                <Heart className="w-5 h-5 text-primary fill-primary" />
-                <span className="text-lg font-semibold text-primary">
-                  {userProfile?.bloodType}
+
+                <Heart
+                  className="
+                    w-5 h-5
+                    text-primary
+                    fill-primary
+                  "
+                />
+
+                <span
+                  className="
+                    text-lg
+                    font-semibold
+                    text-primary
+                  "
+                >
+                  {userProfile?.bloodType || 'Not set'}
                 </span>
+
               </div>
+
             </div>
+
           </CardContent>
+
         </Card>
 
-        {/* Location Information */}
+
+        {/* ==================================================== */}
+        {/* LOCATION INFORMATION */}
+        {/* ==================================================== */}
+
         <Card className="border-border">
+
           <CardHeader>
+
             <CardTitle className="flex items-center gap-2">
+
               <MapPin className="w-5 h-5 text-primary" />
+
               Location Information
+
             </CardTitle>
+
             <CardDescription>
               Your location helps us connect you with nearby donors/recipients
             </CardDescription>
+
           </CardHeader>
+
+
           <CardContent className="space-y-4">
+
+
+            {/* COLLEGE */}
+
             <div className="space-y-2">
-              <Label htmlFor="college">College/University</Label>
+
+              <Label htmlFor="college">
+                College/University
+              </Label>
+
               <Input
                 id="college"
                 name="college"
@@ -207,36 +580,70 @@ export default function ProfilePage() {
                 onChange={handleInputChange}
                 className="border-border"
               />
+
             </div>
 
+
+            {/* ADDRESS */}
+
             <div className="space-y-2">
-              <Label htmlFor="address">Address</Label>
+
+              <Label htmlFor="address">
+                Address
+              </Label>
+
               <Input
                 id="address"
                 name="address"
-                value={formData.location.address}
+                value={
+                  formData.location?.address || ''
+                }
                 onChange={handleLocationChange}
                 placeholder="Your full address"
                 className="border-border"
               />
+
             </div>
+
           </CardContent>
+
         </Card>
 
-        {/* Medical Information */}
+
+        {/* ==================================================== */}
+        {/* MEDICAL INFORMATION */}
+        {/* ==================================================== */}
+
         <Card className="border-border">
+
           <CardHeader>
+
             <CardTitle className="flex items-center gap-2">
+
               <Heart className="w-5 h-5 text-primary" />
+
               Medical Information
+
             </CardTitle>
+
             <CardDescription>
               Your medical history and availability status
             </CardDescription>
+
           </CardHeader>
+
+
           <CardContent className="space-y-4">
+
+
+            {/* MEDICAL HISTORY */}
+
             <div className="space-y-2">
-              <Label htmlFor="medicalHistory">Medical History</Label>
+
+              <Label htmlFor="medicalHistory">
+                Medical History
+              </Label>
+
               <Textarea
                 id="medicalHistory"
                 name="medicalHistory"
@@ -246,62 +653,165 @@ export default function ProfilePage() {
                 className="border-border"
                 rows={4}
               />
+
             </div>
 
-            <div className="flex items-center justify-between p-3 bg-secondary/5 rounded-lg border border-border">
+
+            {/* AVAILABILITY */}
+
+            <div
+              className="
+                flex
+                items-center
+                justify-between
+                p-3
+                bg-secondary/5
+                rounded-lg
+                border
+                border-border
+              "
+            >
+
               <div>
-                <p className="font-semibold text-foreground">Donation Availability</p>
+
+                <p className="font-semibold text-foreground">
+                  Donation Availability
+                </p>
+
                 <p className="text-sm text-foreground/60">
+
                   {formData.isAvailable
                     ? 'You are available to donate'
                     : 'You are currently unavailable'}
+
                 </p>
+
               </div>
+
+
               <Switch
                 checked={formData.isAvailable}
                 onCheckedChange={(checked) =>
-                  setFormData(prev => ({ ...prev, isAvailable: checked }))
+                  setFormData(prev => ({
+                    ...prev,
+                    isAvailable: checked,
+                  }))
                 }
               />
+
             </div>
+
           </CardContent>
+
         </Card>
 
-        {/* Account Statistics */}
+
+        {/* ==================================================== */}
+        {/* ACCOUNT STATISTICS */}
+        {/* ==================================================== */}
+
         <Card className="border-border bg-secondary/5">
+
           <CardHeader>
-            <CardTitle>Account Statistics</CardTitle>
+
+            <CardTitle>
+              Account Statistics
+            </CardTitle>
+
           </CardHeader>
+
+
           <CardContent className="space-y-3">
+
+
+            {/* TOTAL DONATIONS */}
+
             <div className="flex justify-between">
-              <span className="text-foreground/70">Total Donations</span>
-              <span className="font-semibold text-foreground">{userProfile?.totalDonations || 0}</span>
+
+              <span className="text-foreground/70">
+                Total Donations
+              </span>
+
+              <span className="font-semibold text-foreground">
+
+                {userProfile?.totalDonations || 0}
+
+              </span>
+
             </div>
+
+
+            {/* ACCOUNT TYPE */}
+
             <div className="flex justify-between">
-              <span className="text-foreground/70">Account Type</span>
-              <span className="font-semibold text-foreground capitalize">{userProfile?.role}</span>
+
+              <span className="text-foreground/70">
+                Account Type
+              </span>
+
+              <span className="font-semibold text-foreground capitalize">
+
+                {userProfile?.role || 'Not set'}
+
+              </span>
+
             </div>
+
+
+            {/* LAST DONATION */}
+
             {userProfile?.lastDonation && (
+
               <div className="flex justify-between">
-                <span className="text-foreground/70">Last Donation</span>
-                <span className="font-semibold text-foreground">
-                  {new Date(userProfile.lastDonation).toLocaleDateString()}
+
+                <span className="text-foreground/70">
+                  Last Donation
                 </span>
+
+                <span className="font-semibold text-foreground">
+
+                  {new Date(
+                    userProfile.lastDonation
+                  ).toLocaleDateString()}
+
+                </span>
+
               </div>
+
             )}
+
           </CardContent>
+
         </Card>
 
-        {/* Save Button */}
+
+        {/* ==================================================== */}
+        {/* SAVE BUTTON */}
+        {/* ==================================================== */}
+
         <Button
           onClick={handleSave}
           disabled={saving}
-          className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+          className="
+            w-full
+            bg-primary
+            text-primary-foreground
+            hover:bg-primary/90
+          "
           size="lg"
         >
-          {saving ? 'Saving...' : 'Save Changes'}
+
+          {saving
+            ? 'Saving...'
+            : 'Save Changes'}
+
         </Button>
+
+
       </div>
+
     </div>
+
   );
+
 }

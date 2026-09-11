@@ -7,7 +7,10 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { addMonths, isAfter } from 'date-fns';
+import {
+  addMonths,
+  addDays,
+} from 'date-fns';
 
 /**
  * Get a Date from either a Firestore Timestamp,
@@ -25,9 +28,10 @@ function parseDate(value: any): Date | null {
         : date;
     }
 
-    const date = value instanceof Date
-      ? value
-      : new Date(value);
+    const date =
+      value instanceof Date
+        ? value
+        : new Date(value);
 
     return isNaN(date.getTime())
       ? null
@@ -35,6 +39,399 @@ function parseDate(value: any): Date | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Convert a value to a boolean.
+ *
+ * Supports both:
+ *   true / false
+ *   "yes" / "no"
+ *   "true" / "false"
+ */
+function isYes(value: any): boolean {
+  if (value === true) return true;
+
+  if (
+    typeof value === 'string' &&
+    value.toLowerCase() === 'yes'
+  ) {
+    return true;
+  }
+
+  if (
+    typeof value === 'string' &&
+    value.toLowerCase() === 'true'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Convert a value to a number.
+ */
+function parseNumber(value: any): number | null {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ''
+  ) {
+    return null;
+  }
+
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? number
+    : null;
+}
+
+/**
+ * Return true when the date is still in the future.
+ */
+function isFutureDate(date: Date): boolean {
+  return date.getTime() > Date.now();
+}
+
+/**
+ * Return the later of two dates.
+ */
+function laterDate(
+  current: Date | null,
+  candidate: Date | null
+): Date | null {
+  if (!candidate) return current;
+  if (!current) return candidate;
+
+  return candidate.getTime() > current.getTime()
+    ? candidate
+    : current;
+}
+
+/**
+ * Calculate the donor's eligibility based on the
+ * information stored in the users/{uid} document.
+ *
+ * The returned object is used internally by both
+ * getUserAvailability() and isUserEligibleToDonate().
+ */
+function calculateEligibility(data: any): {
+  eligible: boolean;
+  permanent: boolean;
+  medicalReview: boolean;
+  reason: string | null;
+  nextEligibleDate: Date | null;
+} {
+  const onboarding = data?.onboarding ?? {};
+
+  const now = new Date();
+
+  let nextEligibleDate: Date | null = null;
+
+  // --------------------------------------------------
+  // 1. ONBOARDING COMPLETION
+  // --------------------------------------------------
+
+  if (data?.onboardingCompleted !== true) {
+    return {
+      eligible: false,
+      permanent: false,
+      medicalReview: true,
+      reason: 'Complete your health eligibility onboarding first.',
+      nextEligibleDate: null,
+    };
+  }
+
+  // --------------------------------------------------
+  // 2. AGE
+  // --------------------------------------------------
+
+  const age =
+    parseNumber(onboarding.age) ??
+    parseNumber(data.age);
+
+  if (age !== null) {
+    if (age < 18) {
+      return {
+        eligible: false,
+        permanent: false,
+        medicalReview: false,
+        reason:
+          'You must be at least 18 years old to donate blood.',
+        nextEligibleDate: null,
+      };
+    }
+
+    if (age > 65) {
+      return {
+        eligible: false,
+        permanent: false,
+        medicalReview: false,
+        reason:
+          'Blood donation is currently restricted for donors above 65 years of age.',
+        nextEligibleDate: null,
+      };
+    }
+  }
+
+  // --------------------------------------------------
+  // 3. WEIGHT
+  // --------------------------------------------------
+
+  const weight =
+    parseNumber(onboarding.weight) ??
+    parseNumber(data.weight);
+
+  if (weight !== null && weight < 55) {
+    return {
+      eligible: false,
+      permanent: false,
+      medicalReview: false,
+      reason:
+        'You must weigh at least 45 kg to donate blood.',
+      nextEligibleDate: null,
+    };
+  }
+
+  // --------------------------------------------------
+  // 4. USER HAS BEEN TOLD THEY CANNOT DONATE
+  // --------------------------------------------------
+
+  const cannotDonate =
+    isYes(onboarding.cannotDonate) ||
+    isYes(data.cannotDonate);
+
+  if (cannotDonate) {
+    return {
+      eligible: false,
+      permanent: true,
+      medicalReview: true,
+      reason:
+        'Your health information indicates that you have been advised not to donate blood.',
+      nextEligibleDate: null,
+    };
+  }
+
+  // --------------------------------------------------
+  // 5. HIV/AIDS
+  // --------------------------------------------------
+
+  const hivAids =
+    isYes(onboarding.hivAids) ||
+    isYes(data.hivAids);
+
+  if (hivAids) {
+    return {
+      eligible: false,
+      permanent: true,
+      medicalReview: false,
+      reason:
+        'You are currently not eligible to donate blood based on your HIV/AIDS history.',
+      nextEligibleDate: null,
+    };
+  }
+
+  // --------------------------------------------------
+  // 6. HEPATITIS B / C
+  // --------------------------------------------------
+
+  const hepatitis =
+    isYes(onboarding.hepatitis) ||
+    isYes(data.hepatitis);
+
+  if (hepatitis) {
+    return {
+      eligible: false,
+      permanent: true,
+      medicalReview: false,
+      reason:
+        'You are currently not eligible to donate blood based on your hepatitis B/C history.',
+      nextEligibleDate: null,
+    };
+  }
+
+  // --------------------------------------------------
+  // 7. SERIOUS INFECTIOUS DISEASE
+  // --------------------------------------------------
+
+  const seriousInfectiousDisease =
+    isYes(onboarding.seriousInfectiousDisease) ||
+    isYes(data.seriousInfectiousDisease);
+
+  if (seriousInfectiousDisease) {
+    return {
+      eligible: false,
+      permanent: false,
+      medicalReview: true,
+      reason:
+        'Your recent infectious disease history requires medical screening before blood donation.',
+      nextEligibleDate: null,
+    };
+  }
+
+  // --------------------------------------------------
+  // 8. PREVIOUS BLOOD DONATION
+  // --------------------------------------------------
+
+  const lastDonationDate =
+    parseDate(data.lastDonation) ??
+    parseDate(data.lastDonationDate) ??
+    parseDate(onboarding.lastDonationDate);
+
+  if (lastDonationDate) {
+    const nextDonationDate =
+      addMonths(lastDonationDate, 3);
+
+    if (isFutureDate(nextDonationDate)) {
+      nextEligibleDate = laterDate(
+        nextEligibleDate,
+        nextDonationDate
+      );
+    }
+  }
+
+  // --------------------------------------------------
+  // 9. EXISTING nextAvailableDate
+  // --------------------------------------------------
+
+  const storedNextAvailableDate =
+    parseDate(data.nextAvailableDate);
+
+  if (
+    storedNextAvailableDate &&
+    isFutureDate(storedNextAvailableDate)
+  ) {
+    nextEligibleDate = laterDate(
+      nextEligibleDate,
+      storedNextAvailableDate
+    );
+  }
+
+  // --------------------------------------------------
+  // 10. TATTOO / PIERCING / PERMANENT MAKEUP
+  // --------------------------------------------------
+
+  const tattooPiercingMakeup =
+    isYes(onboarding.recentTattooPiercingMakeup) ||
+    isYes(data.recentTattooPiercingMakeup);
+
+  const tattooDate =
+    parseDate(
+      onboarding.tattooPiercingMakeupDate
+    ) ??
+    parseDate(data.tattooPiercingMakeupDate);
+
+  if (tattooPiercingMakeup) {
+    if (tattooDate) {
+      // App screening rule:
+      // 6-month waiting period after tattoo,
+      // piercing or permanent makeup.
+      const tattooEligibleDate =
+        addMonths(tattooDate, 6);
+
+      if (isFutureDate(tattooEligibleDate)) {
+        nextEligibleDate = laterDate(
+          nextEligibleDate,
+          tattooEligibleDate
+        );
+      }
+    } else {
+      return {
+        eligible: false,
+        permanent: false,
+        medicalReview: true,
+        reason:
+          'Please provide the date of your recent tattoo, piercing, or permanent makeup.',
+        nextEligibleDate: null,
+      };
+    }
+  }
+
+  // --------------------------------------------------
+  // 11. DENTAL TREATMENT
+  // --------------------------------------------------
+
+  const recentDentalTreatment =
+    isYes(onboarding.recentDentalTreatment) ||
+    isYes(data.recentDentalTreatment);
+
+  const dentalDate =
+    parseDate(
+      onboarding.dentalTreatmentDate
+    ) ??
+    parseDate(data.dentalTreatmentDate);
+
+  if (recentDentalTreatment) {
+    if (dentalDate) {
+      // App screening rule:
+      // 6-month waiting period after recent dental treatment.
+      const dentalEligibleDate =
+        addMonths(dentalDate, 6);
+
+      if (isFutureDate(dentalEligibleDate)) {
+        nextEligibleDate = laterDate(
+          nextEligibleDate,
+          dentalEligibleDate
+        );
+      }
+    } else {
+      return {
+        eligible: false,
+        permanent: false,
+        medicalReview: true,
+        reason:
+          'Please provide the date of your recent dental treatment.',
+        nextEligibleDate: null,
+      };
+    }
+  }
+
+  // --------------------------------------------------
+  // 12. TEMPORARY RESTRICTION EXISTS
+  // --------------------------------------------------
+
+  if (nextEligibleDate) {
+    return {
+      eligible: false,
+      permanent: false,
+      medicalReview: false,
+      reason:
+        'You are temporarily unavailable for blood donation.',
+      nextEligibleDate,
+    };
+  }
+
+  // --------------------------------------------------
+  // 13. STORED AVAILABILITY
+  // --------------------------------------------------
+
+  if (
+    data.isAvailable === false ||
+    data.bloodStatus === 'Unavailable'
+  ) {
+    return {
+      eligible: false,
+      permanent: false,
+      medicalReview: false,
+      reason:
+        'You are currently unavailable for blood donation.',
+      nextEligibleDate: null,
+    };
+  }
+
+  // --------------------------------------------------
+  // 14. EVERYTHING IS CLEAR
+  // --------------------------------------------------
+
+  return {
+    eligible: true,
+    permanent: false,
+    medicalReview: false,
+    reason: null,
+    nextEligibleDate: null,
+  };
 }
 
 /**
@@ -69,8 +466,6 @@ export async function updateUserAfterDonation(
         : 0;
 
     // Current app uses a 3-month interval.
-    // This can be made sex-specific later if that information
-    // is added to the donor profile.
     const nextAvailable = addMonths(
       donationDate,
       3
@@ -78,6 +473,11 @@ export async function updateUserAfterDonation(
 
     const updatePayload: Record<string, any> = {
       lastDonation:
+        donationDate.toISOString(),
+
+      // Keep this field as well for compatibility
+      // with existing profile/request logic.
+      lastDonationDate:
         donationDate.toISOString(),
 
       totalDonations:
@@ -89,6 +489,17 @@ export async function updateUserAfterDonation(
 
       nextAvailableDate:
         nextAvailable.toISOString(),
+
+      // Keep a common eligibility field for the
+      // Requests page and other UI components.
+      nextEligibleDonationDate:
+        nextAvailable.toISOString(),
+
+      donationEligibilityStatus:
+        'temporarily_unavailable',
+
+      donationEligibilityReason:
+        'You must wait 3 months after your completed blood donation.',
 
       updatedAt: serverTimestamp(),
     };
@@ -118,9 +529,16 @@ export async function updateUserAfterDonation(
 /**
  * Get the donor's current availability.
  *
- * IMPORTANT:
- * If the donor's waiting period has ended,
- * automatically restore availability.
+ * This dynamically evaluates:
+ * - age
+ * - weight
+ * - medical restrictions
+ * - donation waiting period
+ * - tattoo/piercing waiting period
+ * - dental-treatment waiting period
+ *
+ * Temporary restrictions automatically expire
+ * once their waiting periods have ended.
  */
 export async function getUserAvailability(
   userId: string
@@ -146,45 +564,49 @@ export async function getUserAvailability(
     const data =
       userSnap.data() ?? {};
 
-    const nextDate =
-      parseDate(data.nextAvailableDate);
+    const eligibility =
+      calculateEligibility(data);
 
     // --------------------------------------------------
-    // 1. Check donation waiting period FIRST
+    // Permanently unavailable / medical review
     // --------------------------------------------------
 
-    if (nextDate) {
-      const now = new Date();
+    if (
+      eligibility.permanent ||
+      eligibility.medicalReview
+    ) {
+      await updateAvailabilityFields(
+        userRef,
+        data,
+        eligibility
+      );
 
-      if (isAfter(now, nextDate)) {
-        // Waiting period is over.
-        //
-        // Automatically restore donor availability.
-        if (
-          data.isAvailable === false ||
-          data.bloodStatus === 'Unavailable'
-        ) {
-          await updateDoc(userRef, {
-            isAvailable: true,
-            bloodStatus: 'Available',
-            updatedAt: serverTimestamp(),
-          });
-        }
-
-        return 'Available';
-      }
-
-      // Waiting period has NOT ended.
       return 'Unavailable';
     }
 
     // --------------------------------------------------
-    // 2. No waiting period exists
+    // Temporary restriction
     // --------------------------------------------------
 
-    if (data.isAvailable === false) {
+    if (eligibility.nextEligibleDate) {
+      await updateAvailabilityFields(
+        userRef,
+        data,
+        eligibility
+      );
+
       return 'Unavailable';
     }
+
+    // --------------------------------------------------
+    // Eligible
+    // --------------------------------------------------
+
+    await updateAvailabilityFields(
+      userRef,
+      data,
+      eligibility
+    );
 
     return 'Available';
   } catch (error) {
@@ -201,8 +623,10 @@ export async function getUserAvailability(
  * Check whether a donor is currently eligible to donate.
  *
  * IMPORTANT:
- * A stored isAvailable=false should NOT permanently
- * block the donor if their nextAvailableDate has passed.
+ * This function is used by donationService.ts before
+ * allowing a donor to offer blood.
+ *
+ * Therefore this is the main eligibility gate.
  */
 export async function isUserEligibleToDonate(
   userId: string
@@ -224,54 +648,112 @@ export async function isUserEligibleToDonate(
     const data =
       userSnap.data() ?? {};
 
-    const nextDate =
-      parseDate(data.nextAvailableDate);
+    const eligibility =
+      calculateEligibility(data);
 
-    // --------------------------------------------------
-    // 1. Donation waiting period
-    // --------------------------------------------------
+    // Update stored availability so the rest of
+    // the application reflects the same result.
+    await updateAvailabilityFields(
+      userRef,
+      data,
+      eligibility
+    );
 
-    if (nextDate) {
-      const now = new Date();
-
-      // Still within the waiting period.
-      if (!isAfter(now, nextDate)) {
-        return false;
-      }
-
-      // Waiting period has ended.
-      // Automatically restore availability.
-      if (
-        data.isAvailable === false ||
-        data.bloodStatus === 'Unavailable'
-      ) {
-        await updateDoc(userRef, {
-          isAvailable: true,
-          bloodStatus: 'Available',
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      return true;
-    }
-
-    // --------------------------------------------------
-    // 2. No nextAvailableDate
-    // --------------------------------------------------
-
-    if (
-      data.bloodStatus === 'Unavailable'
-    ) {
-      return false;
-    }
-
-    return data.isAvailable !== false;
+    return eligibility.eligible;
   } catch (error) {
     console.error(
       '[userService] Eligibility check failed:',
       error
     );
 
+    // Fail closed:
+    // if the eligibility check itself fails,
+    // do NOT allow a blood offer.
     return false;
   }
+}
+
+/**
+ * Keep Firestore availability fields synchronized
+ * with the calculated eligibility.
+ */
+async function updateAvailabilityFields(
+  userRef: ReturnType<typeof doc>,
+  data: any,
+  eligibility: {
+    eligible: boolean;
+    permanent: boolean;
+    medicalReview: boolean;
+    reason: string | null;
+    nextEligibleDate: Date | null;
+  }
+): Promise<void> {
+  const nextDate =
+    eligibility.nextEligibleDate;
+
+  const nextDateISO =
+    nextDate
+      ? nextDate.toISOString()
+      : null;
+
+  let status:
+    | 'eligible'
+    | 'temporarily_unavailable'
+    | 'permanently_unavailable'
+    | 'medical_review';
+
+  if (eligibility.permanent) {
+    status =
+      'permanently_unavailable';
+  } else if (eligibility.medicalReview) {
+    status =
+      'medical_review';
+  } else if (nextDate) {
+    status =
+      'temporarily_unavailable';
+  } else {
+    status = 'eligible';
+  }
+
+  const shouldBeAvailable =
+    eligibility.eligible;
+
+  const shouldUpdate =
+    data.isAvailable !== shouldBeAvailable ||
+    data.donationEligibilityStatus !== status ||
+    data.donationEligibilityReason !==
+      eligibility.reason ||
+    data.nextEligibleDonationDate !==
+      nextDateISO;
+
+  if (!shouldUpdate) {
+    return;
+  }
+
+  const updatePayload: Record<string, any> = {
+    isAvailable:
+      shouldBeAvailable,
+
+    bloodStatus:
+      shouldBeAvailable
+        ? 'Available'
+        : 'Unavailable',
+
+    donationEligibilityStatus:
+      status,
+
+    donationEligibilityReason:
+      eligibility.reason,
+
+    nextEligibleDonationDate:
+      nextDateISO,
+
+    updatedAt:
+      serverTimestamp(),
+  };
+
+  await updateDoc(
+    userRef,
+    updatePayload
+  );
 }

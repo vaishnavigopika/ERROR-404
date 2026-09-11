@@ -24,9 +24,12 @@ export default function AdminLayout({
   useEffect(() => {
     const checkAdmin = async () => {
       if (!user) {
+        console.log('ADMIN CHECK: NO FIREBASE USER');
         router.push('/auth/login');
         return;
       }
+      
+      console.log('ADMIN CHECK: USER FOUND', user.uid, user.email);
 
       try {
         const docRef = doc(db, 'users', user.uid);

@@ -1,18 +1,27 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-
-import { useAuth } from '@/lib/contexts/AuthContext';
-import { db } from '@/lib/firebase';
+import Link from 'next/link';
 
 import {
-  collection,
-  addDoc,
+  createUserWithEmailAndPassword,
+  deleteUser,
+  updateProfile,
+} from 'firebase/auth';
+
+import {
   doc,
-  getDoc,
+  setDoc,
   serverTimestamp,
 } from 'firebase/firestore';
+
+import { auth, db } from '@/lib/firebase';
+
+import {
+  BLOOD_TYPES,
+  BloodType,
+} from '@/lib/bloodCompatibility';
 
 import {
   Card,
@@ -25,7 +34,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 
 import {
   Select,
@@ -38,748 +46,501 @@ import {
 import { useToast } from '@/hooks/use-toast';
 
 import {
-  BLOOD_TYPES,
-  BloodType,
-} from '@/lib/bloodCompatibility';
-
-import {
   Heart,
+  UserPlus,
+  Eye,
+  EyeOff,
   ArrowLeft,
-  AlertCircle,
 } from 'lucide-react';
 
-import Link from 'next/link';
 
-
-// ============================================================
-// HELPERS
-// ============================================================
-
-function getTodayDate(): string {
-  const today = new Date();
-
-  const year = today.getFullYear();
-
-  const month = String(
-    today.getMonth() + 1
-  ).padStart(2, '0');
-
-  const day = String(
-    today.getDate()
-  ).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
-}
-
-
-// ============================================================
-// PAGE
-// ============================================================
-
-export default function NewRequestPage() {
-
+export default function SignupPage() {
   const router = useRouter();
-
-  const { user } = useAuth();
-
   const { toast } = useToast();
 
+  const [loading, setLoading] = useState(false);
 
-  const [loading, setLoading] =
-    useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const [checkingProfile, setCheckingProfile] =
-    useState(true);
-
-  const [isRecipient, setIsRecipient] =
-    useState(false);
-
-
-  const [formData, setFormData] =
-    useState({
-      bloodType: '',
-      quantity: '1',
-      urgency:
-        'medium' as
-          | 'low'
-          | 'medium'
-          | 'high'
-          | 'critical',
-      reason: '',
-      requiredDate:
-        getTodayDate(),
-    });
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    role: '',
+    bloodType: '',
+    password: '',
+    confirmPassword: '',
+  });
 
 
-  const minDate =
-    getTodayDate();
+  // ============================================================
+  // INPUT HANDLER
+  // ============================================================
+
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const { name, value } = e.target;
+
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
 
 
-  // ==========================================================
-  // CHECK USER ROLE
-  // ==========================================================
+  // ============================================================
+  // SELECT HANDLER
+  // ============================================================
 
-  useEffect(() => {
+  const handleSelectChange = (
+    name: string,
+    value: string
+  ) => {
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
 
-    const checkUserProfile =
-      async () => {
 
-        if (!user?.uid) {
+  // ============================================================
+  // VALIDATION
+  // ============================================================
 
-          setCheckingProfile(false);
+  const validateForm = () => {
+    if (!formData.name.trim()) {
+      toast({
+        title: 'Name Required',
+        description: 'Please enter your full name.',
+        variant: 'destructive',
+      });
 
-          return;
+      return false;
+    }
+
+    if (!formData.email.trim()) {
+      toast({
+        title: 'Email Required',
+        description: 'Please enter your email address.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    if (!formData.role) {
+      toast({
+        title: 'Account Type Required',
+        description: 'Please select Donor or Recipient.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    if (!formData.bloodType) {
+      toast({
+        title: 'Blood Type Required',
+        description: 'Please select your blood type.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    if (
+      !BLOOD_TYPES.includes(
+        formData.bloodType as BloodType
+      )
+    ) {
+      toast({
+        title: 'Invalid Blood Type',
+        description: 'Please select a valid blood type.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    if (formData.password.length < 6) {
+      toast({
+        title: 'Password Too Short',
+        description:
+          'Password must contain at least 6 characters.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    if (
+      formData.password !==
+      formData.confirmPassword
+    ) {
+      toast({
+        title: 'Passwords Do Not Match',
+        description:
+          'Please make sure both passwords are the same.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
+    return true;
+  };
+
+
+  // ============================================================
+  // SIGN UP
+  // ============================================================
+
+  const handleSubmit = async (
+    e: React.FormEvent<HTMLFormElement>
+  ) => {
+    e.preventDefault();
+
+    if (!validateForm()) {
+      return;
+    }
+
+    setLoading(true);
+
+    let createdUser = null;
+
+    try {
+      // --------------------------------------------------------
+      // CREATE FIREBASE AUTH ACCOUNT
+      // --------------------------------------------------------
+
+      const credential =
+        await createUserWithEmailAndPassword(
+          auth,
+          formData.email.trim(),
+          formData.password
+        );
+
+      createdUser = credential.user;
+
+
+      // --------------------------------------------------------
+      // SET DISPLAY NAME
+      // --------------------------------------------------------
+
+      await updateProfile(
+        credential.user,
+        {
+          displayName: formData.name.trim(),
         }
-
-
-        try {
-
-          const userRef =
-            doc(
-              db,
-              'users',
-              user.uid
-            );
-
-
-          const userSnap =
-            await getDoc(
-              userRef
-            );
-
-
-          if (
-            !userSnap.exists()
-          ) {
-
-            toast({
-              title:
-                'Profile Not Found',
-
-              description:
-                'Your user profile could not be found.',
-
-              variant:
-                'destructive',
-            });
-
-            setIsRecipient(
-              false
-            );
-
-            return;
-          }
-
-
-          const userData =
-            userSnap.data();
-
-
-          if (
-            userData.role ===
-            'recipient'
-          ) {
-
-            setIsRecipient(
-              true
-            );
-
-          } else {
-
-            setIsRecipient(
-              false
-            );
-
-            toast({
-              title:
-                'Access Restricted',
-
-              description:
-                'Only recipients can create blood requests.',
-
-              variant:
-                'destructive',
-            });
-          }
-
-        } catch (
-          error
-        ) {
-
-          console.error(
-            'Error checking user profile:',
-            error
-          );
-
-          toast({
-            title:
-              'Error',
-
-            description:
-              'Could not verify your account type.',
-
-            variant:
-              'destructive',
-          });
-
-          setIsRecipient(
-            false
-          );
-
-        } finally {
-
-          setCheckingProfile(
-            false
-          );
-        }
-      };
-
-
-    checkUserProfile();
-
-  }, [
-    user?.uid,
-    toast,
-  ]);
-
-
-  // ==========================================================
-  // INPUT HANDLERS
-  // ==========================================================
-
-  const handleInputChange =
-    (
-      e: React.ChangeEvent<
-        HTMLInputElement |
-        HTMLTextAreaElement
-      >
-    ) => {
-
-      const {
-        name,
-        value,
-      } = e.target;
-
-
-      setFormData(
-        (prev) => ({
-          ...prev,
-          [name]:
-            value,
-        })
-      );
-    };
-
-
-  const handleSelectChange =
-    (
-      name: string,
-      value: string
-    ) => {
-
-      setFormData(
-        (prev) => ({
-          ...prev,
-          [name]:
-            value,
-        })
-      );
-    };
-
-
-  // ==========================================================
-  // FORM VALIDATION
-  // ==========================================================
-
-  const quantity =
-    Number(
-      formData.quantity
-    );
-
-
-  const isValidQuantity =
-    Number.isInteger(
-      quantity
-    ) &&
-    quantity >= 1 &&
-    quantity <= 10;
-
-
-  const isValidReason =
-    formData.reason.trim().length >= 10;
-
-
-  const isValidDate =
-    Boolean(
-      formData.requiredDate &&
-      formData.requiredDate >=
-        minDate
-    );
-
-
-  const isFormValid =
-    Boolean(
-      formData.bloodType &&
-      isValidQuantity &&
-      isValidReason &&
-      isValidDate
-    );
-
-
-  // ==========================================================
-  // SUBMIT
-  // ==========================================================
-
-  const handleSubmit =
-    async (
-      e: React.FormEvent
-    ) => {
-
-      e.preventDefault();
-
-
-      if (
-        !user?.uid
-      ) {
-
-        toast({
-          title:
-            'Authentication Required',
-
-          description:
-            'Please sign in to create a request.',
-
-          variant:
-            'destructive',
-        });
-
-        return;
-      }
-
-
-      if (
-        !isRecipient
-      ) {
-
-        toast({
-          title:
-            'Access Restricted',
-
-          description:
-            'Only recipients can create blood requests.',
-
-          variant:
-            'destructive',
-        });
-
-        return;
-      }
-
-
-      if (
-        !formData.bloodType
-      ) {
-
-        toast({
-          title:
-            'Missing Blood Type',
-
-          description:
-            'Please select the blood type you need.',
-
-          variant:
-            'destructive',
-        });
-
-        return;
-      }
-
-
-      if (
-        !BLOOD_TYPES.includes(
-          formData.bloodType as BloodType
-        )
-      ) {
-
-        toast({
-          title:
-            'Invalid Blood Type',
-
-          description:
-            'Please select a valid blood type.',
-
-          variant:
-            'destructive',
-        });
-
-        return;
-      }
-
-
-      if (
-        !isValidQuantity
-      ) {
-
-        toast({
-          title:
-            'Invalid Quantity',
-
-          description:
-            'Units needed must be between 1 and 10.',
-
-          variant:
-            'destructive',
-        });
-
-        return;
-      }
-
-
-      if (
-        !isValidReason
-      ) {
-
-        toast({
-          title:
-            'Reason Too Short',
-
-          description:
-            'Please provide at least 10 characters explaining your request.',
-
-          variant:
-            'destructive',
-        });
-
-        return;
-      }
-
-
-      if (
-        !isValidDate
-      ) {
-
-        toast({
-          title:
-            'Invalid Date',
-
-          description:
-            'Required date cannot be before today.',
-
-          variant:
-            'destructive',
-        });
-
-        return;
-      }
-
-
-      setLoading(
-        true
       );
 
 
-      try {
+      // --------------------------------------------------------
+      // CREATE FIRESTORE USER PROFILE
+      // --------------------------------------------------------
 
-        // =====================================================
-        // CREATE BLOOD REQUEST
-        // =====================================================
+      await setDoc(
+        doc(
+          db,
+          'users',
+          credential.user.uid
+        ),
+        {
+          name: formData.name.trim(),
 
-        const bloodRequest = {
+          email: formData.email.trim(),
 
-          // ---------------------------------------------------
-          // OWNER
-          // ---------------------------------------------------
+          phone: formData.phone.trim(),
 
-          recipientId:
-            user.uid,
-
-
-          // ---------------------------------------------------
-          // BLOOD REQUIREMENT
-          // ---------------------------------------------------
+          role: formData.role,
 
           bloodType:
             formData.bloodType as BloodType,
 
-          // Original number of units requested.
-          // This value NEVER changes.
-          unitsNeeded:
-            quantity,
+          totalDonations: 0,
 
-          // Remaining number of units needed.
-          // This decreases as donors offer blood.
-          quantity:
-            quantity,
+          isAvailable:
+            formData.role === 'donor',
+          
+          onboardingCompleted: false,
 
+          createdAt: serverTimestamp(),
 
-          // ---------------------------------------------------
-          // REQUEST DETAILS
-          // ---------------------------------------------------
-
-          urgency:
-            formData.urgency,
-
-          reason:
-            formData.reason.trim(),
-
-          requiredDate:
-            formData.requiredDate,
+          updatedAt: serverTimestamp(),
+        }
+      );
 
 
-          // ---------------------------------------------------
-          // REQUEST STATUS
-          // ---------------------------------------------------
+      // --------------------------------------------------------
+      // SUCCESS
+      // --------------------------------------------------------
 
-          status:
-            'open' as const,
+      toast({
+        title: 'Account Created',
+        description:
+          'Your BloodConnect account has been created successfully.',
+      });
 
-          matchedDonors:
-            [],
+      router.push('/onboarding');
 
+    } catch (error: any) {
 
-          // ---------------------------------------------------
-          // TIMESTAMPS
-          // ---------------------------------------------------
-
-          createdAt:
-            serverTimestamp(),
-
-          updatedAt:
-            serverTimestamp(),
-        };
+      console.error(
+        'Signup error:',
+        error
+      );
 
 
-        const requestRef =
-          await addDoc(
-            collection(
-              db,
-              'bloodRequests'
-            ),
-            bloodRequest
+      // --------------------------------------------------------
+      // ROLLBACK AUTH ACCOUNT IF FIRESTORE FAILED
+      // --------------------------------------------------------
+
+      if (createdUser) {
+        try {
+          await deleteUser(createdUser);
+        } catch (deleteError) {
+          console.error(
+            'Could not rollback user:',
+            deleteError
           );
-
-
-        console.log(
-          'Blood request created:',
-          requestRef.id
-        );
-
-
-        // =====================================================
-        // SUCCESS
-        // =====================================================
-
-        toast({
-          title:
-            'Request Created',
-
-          description:
-            'Your blood request has been posted successfully.',
-        });
-
-
-        router.push(
-          '/dashboard/requests'
-        );
-
-
-      } catch (
-        error: any
-      ) {
-
-        console.error(
-          'Error creating request:',
-          error
-        );
-
-
-        toast({
-          title:
-            'Creation Failed',
-
-          description:
-            error?.message ||
-            'Could not create blood request. Please try again.',
-
-          variant:
-            'destructive',
-        });
-
-
-      } finally {
-
-        setLoading(
-          false
-        );
+        }
       }
-    };
 
 
-  // ==========================================================
-  // LOADING / PROFILE CHECK
-  // ==========================================================
+      // --------------------------------------------------------
+      // FIREBASE ERROR MESSAGES
+      // --------------------------------------------------------
 
-  if (
-    checkingProfile
-  ) {
+      let message =
+        'Could not create your account. Please try again.';
 
-    return (
+      switch (error?.code) {
 
-      <div className="flex items-center justify-center min-h-[60vh]">
+        case 'auth/email-already-in-use':
+          message =
+            'An account with this email already exists.';
+          break;
 
-        <div className="text-center space-y-4">
+        case 'auth/invalid-email':
+          message =
+            'Please enter a valid email address.';
+          break;
 
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+        case 'auth/weak-password':
+          message =
+            'Password is too weak. Please use at least 6 characters.';
+          break;
 
-          <p className="text-muted-foreground">
-            Checking your account...
-          </p>
+        case 'auth/network-request-failed':
+          message =
+            'Network error. Please check your internet connection.';
+          break;
 
-        </div>
+        case 'auth/operation-not-allowed':
+          message =
+            'Email/password authentication is not enabled in Firebase.';
+          break;
 
-      </div>
-    );
-  }
+        case 'permission-denied':
+          message =
+            'Your account was created, but the user profile could not be saved because of Firestore permissions.';
+          break;
 
-
-  // ==========================================================
-  // NOT A RECIPIENT
-  // ==========================================================
-
-  if (
-    !isRecipient
-  ) {
-
-    return (
-
-      <div className="p-6 md:p-8 max-w-2xl mx-auto">
-
-        <Card className="border-border">
-
-          <CardContent className="pt-12 pb-12 text-center">
-
-            <AlertCircle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-
-
-            <h2 className="text-xl font-semibold mb-2">
-
-              Request Creation Unavailable
-
-            </h2>
+        default:
+          if (error?.message) {
+            message = error.message;
+          }
+      }
 
 
-            <p className="text-muted-foreground mb-6">
+      toast({
+        title: 'Signup Failed',
+        description: message,
+        variant: 'destructive',
+      });
 
-              Only registered recipients can create
-              blood requests.
-
-            </p>
-
-
-            <Button
-              asChild
-              variant="outline"
-            >
-
-              <Link
-                href="/dashboard/requests"
-              >
-
-                <ArrowLeft className="w-4 h-4 mr-2" />
-
-                Back to Requests
-
-              </Link>
-
-            </Button>
-
-          </CardContent>
-
-        </Card>
-
-      </div>
-    );
-  }
+    } finally {
+      setLoading(false);
+    }
+  };
 
 
-  // ==========================================================
-  // MAIN UI
-  // ==========================================================
+  // ============================================================
+  // UI
+  // ============================================================
 
   return (
+    <div className="min-h-screen flex items-center justify-center bg-background p-6">
 
-    <div className="p-6 md:p-8 space-y-8 max-w-2xl mx-auto">
+      <Card className="w-full max-w-lg border-border shadow-sm">
 
-      {/* ================================================== */}
-      {/* HEADER */}
-      {/* ================================================== */}
+        {/* ================================================== */}
+        {/* HEADER */}
+        {/* ================================================== */}
 
-      <div className="space-y-2">
+        <CardHeader className="space-y-4">
 
-        <Link
-          href="/dashboard/requests"
-          className="inline-flex items-center gap-2 text-primary hover:underline"
-        >
+          <Link
+            href="/auth/login"
+            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Login
+          </Link>
 
-          <ArrowLeft className="w-4 h-4" />
+          <div className="flex items-center gap-3">
 
-          Back to Requests
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10">
+              <Heart className="h-6 w-6 text-primary" />
+            </div>
 
-        </Link>
+            <div>
+              <CardTitle className="text-2xl">
+                Create Account
+              </CardTitle>
 
+              <CardDescription>
+                Join BloodConnect and help save lives.
+              </CardDescription>
+            </div>
 
-        <h1 className="text-3xl font-bold tracking-tight">
-
-          Create Blood Request
-
-        </h1>
-
-
-        <p className="text-muted-foreground">
-
-          Share the details of the blood you need so
-          compatible donors can find your request.
-
-        </p>
-
-      </div>
-
-
-      {/* ================================================== */}
-      {/* FORM */}
-      {/* ================================================== */}
-
-      <Card className="border-border shadow-sm">
-
-        <CardHeader>
-
-          <CardTitle className="flex items-center gap-2">
-
-            <Heart className="w-5 h-5 text-primary" />
-
-            Request Information
-
-          </CardTitle>
-
-
-          <CardDescription>
-
-            Provide accurate information to help donors
-            understand your requirement.
-
-          </CardDescription>
+          </div>
 
         </CardHeader>
 
 
+        {/* ================================================== */}
+        {/* FORM */}
+        {/* ================================================== */}
+
         <CardContent>
 
           <form
-            onSubmit={
-              handleSubmit
-            }
-            className="space-y-6"
+            onSubmit={handleSubmit}
+            className="space-y-5"
           >
+
+            {/* ================================================= */}
+            {/* NAME */}
+            {/* ================================================= */}
+
+            <div className="space-y-2">
+
+              <Label htmlFor="name">
+                Full Name *
+              </Label>
+
+              <Input
+                id="name"
+                name="name"
+                type="text"
+                placeholder="Enter your full name"
+                value={formData.name}
+                onChange={handleInputChange}
+                disabled={loading}
+                required
+              />
+
+            </div>
+
+
+            {/* ================================================= */}
+            {/* EMAIL */}
+            {/* ================================================= */}
+
+            <div className="space-y-2">
+
+              <Label htmlFor="email">
+                Email Address *
+              </Label>
+
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                placeholder="you@example.com"
+                value={formData.email}
+                onChange={handleInputChange}
+                disabled={loading}
+                required
+              />
+
+            </div>
+
+
+            {/* ================================================= */}
+            {/* PHONE */}
+            {/* ================================================= */}
+
+            <div className="space-y-2">
+
+              <Label htmlFor="phone">
+                Phone Number
+              </Label>
+
+              <Input
+                id="phone"
+                name="phone"
+                type="tel"
+                placeholder="Enter your phone number"
+                value={formData.phone}
+                onChange={handleInputChange}
+                disabled={loading}
+              />
+
+              <p className="text-xs text-muted-foreground">
+                Optional. This may help donors or recipients
+                coordinate with you.
+              </p>
+
+            </div>
+
+
+            {/* ================================================= */}
+            {/* ROLE */}
+            {/* ================================================= */}
+
+            <div className="space-y-2">
+
+              <Label htmlFor="role">
+                Account Type *
+              </Label>
+
+              <Select
+                value={formData.role}
+                onValueChange={(value) =>
+                  handleSelectChange(
+                    'role',
+                    value
+                  )
+                }
+                disabled={loading}
+              >
+
+                <SelectTrigger id="role">
+                  <SelectValue
+                    placeholder="Select account type"
+                  />
+                </SelectTrigger>
+
+                <SelectContent>
+
+                  <SelectItem value="donor">
+                    Donor
+                  </SelectItem>
+
+                  <SelectItem value="recipient">
+                    Recipient
+                  </SelectItem>
+
+                </SelectContent>
+
+              </Select>
+
+            </div>
+
 
             {/* ================================================= */}
             {/* BLOOD TYPE */}
@@ -788,36 +549,25 @@ export default function NewRequestPage() {
             <div className="space-y-2">
 
               <Label htmlFor="bloodType">
-
-                Blood Type Required *
-
+                Blood Type *
               </Label>
 
-
               <Select
-                value={
-                  formData.bloodType
+                value={formData.bloodType}
+                onValueChange={(value) =>
+                  handleSelectChange(
+                    'bloodType',
+                    value
+                  )
                 }
-                onValueChange={
-                  (value) =>
-                    handleSelectChange(
-                      'bloodType',
-                      value
-                    )
-                }
-                required
+                disabled={loading}
               >
 
-                <SelectTrigger
-                  id="bloodType"
-                >
-
+                <SelectTrigger id="bloodType">
                   <SelectValue
-                    placeholder="Select blood type"
+                    placeholder="Select your blood type"
                   />
-
                 </SelectTrigger>
-
 
                 <SelectContent>
 
@@ -828,9 +578,7 @@ export default function NewRequestPage() {
                         key={type}
                         value={type}
                       >
-
                         {type}
-
                       </SelectItem>
 
                     )
@@ -844,105 +592,119 @@ export default function NewRequestPage() {
 
 
             {/* ================================================= */}
-            {/* QUANTITY + URGENCY */}
+            {/* PASSWORD */}
             {/* ================================================= */}
 
-            <div className="grid md:grid-cols-2 gap-6">
+            <div className="space-y-2">
 
-              {/* QUANTITY */}
+              <Label htmlFor="password">
+                Password *
+              </Label>
 
-              <div className="space-y-2">
-
-                <Label htmlFor="quantity">
-
-                  Units Needed *
-
-                </Label>
-
+              <div className="relative">
 
                 <Input
-                  id="quantity"
-                  name="quantity"
-                  type="number"
-                  min="1"
-                  max="10"
-                  step="1"
-                  value={
-                    formData.quantity
+                  id="password"
+                  name="password"
+                  type={
+                    showPassword
+                      ? 'text'
+                      : 'password'
                   }
-                  onChange={
-                    handleInputChange
-                  }
+                  placeholder="Create a password"
+                  value={formData.password}
+                  onChange={handleInputChange}
+                  disabled={loading}
+                  className="pr-10"
                   required
                 />
 
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowPassword(
+                      (prev) => !prev
+                    )
+                  }
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  disabled={loading}
+                  aria-label={
+                    showPassword
+                      ? 'Hide password'
+                      : 'Show password'
+                  }
+                >
 
-                <p className="text-xs text-muted-foreground">
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
 
-                  Each donor can contribute 1 unit.
-
-                </p>
+                </button>
 
               </div>
 
+              <p className="text-xs text-muted-foreground">
+                Password must contain at least 6 characters.
+              </p>
 
-              {/* URGENCY */}
-
-              <div className="space-y-2">
-
-                <Label htmlFor="urgency">
-
-                  Urgency Level *
-
-                </Label>
+            </div>
 
 
-                <Select
+            {/* ================================================= */}
+            {/* CONFIRM PASSWORD */}
+            {/* ================================================= */}
+
+            <div className="space-y-2">
+
+              <Label htmlFor="confirmPassword">
+                Confirm Password *
+              </Label>
+
+              <div className="relative">
+
+                <Input
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  type={
+                    showConfirmPassword
+                      ? 'text'
+                      : 'password'
+                  }
+                  placeholder="Confirm your password"
                   value={
-                    formData.urgency
+                    formData.confirmPassword
                   }
-                  onValueChange={
-                    (value) =>
-                      handleSelectChange(
-                        'urgency',
-                        value
-                      )
-                  }
+                  onChange={handleInputChange}
+                  disabled={loading}
+                  className="pr-10"
                   required
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowConfirmPassword(
+                      (prev) => !prev
+                    )
+                  }
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  disabled={loading}
+                  aria-label={
+                    showConfirmPassword
+                      ? 'Hide password'
+                      : 'Show password'
+                  }
                 >
 
-                  <SelectTrigger
-                    id="urgency"
-                  >
+                  {showConfirmPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
 
-                    <SelectValue
-                      placeholder="Select urgency"
-                    />
-
-                  </SelectTrigger>
-
-
-                  <SelectContent>
-
-                    <SelectItem value="low">
-                      Low
-                    </SelectItem>
-
-                    <SelectItem value="medium">
-                      Medium
-                    </SelectItem>
-
-                    <SelectItem value="high">
-                      High
-                    </SelectItem>
-
-                    <SelectItem value="critical">
-                      Critical
-                    </SelectItem>
-
-                  </SelectContent>
-
-                </Select>
+                </button>
 
               </div>
 
@@ -950,189 +712,58 @@ export default function NewRequestPage() {
 
 
             {/* ================================================= */}
-            {/* REQUIRED DATE */}
+            {/* SUBMIT */}
             {/* ================================================= */}
 
-            <div className="space-y-2">
+            <Button
+              type="submit"
+              className="w-full bg-primary hover:bg-primary/90"
+              disabled={loading}
+            >
 
-              <Label htmlFor="requiredDate">
+              {loading ? (
 
-                Date Needed By *
+                <span className="flex items-center gap-2">
 
-              </Label>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
 
+                  Creating Account...
 
-              <Input
-                id="requiredDate"
-                name="requiredDate"
-                type="date"
-                min={
-                  minDate
-                }
-                value={
-                  formData.requiredDate
-                }
-                onChange={
-                  handleInputChange
-                }
-                required
-              />
+                </span>
 
+              ) : (
 
-              <p className="text-xs text-muted-foreground">
+                <span className="flex items-center gap-2">
 
-                Select today or a future date.
+                  <UserPlus className="w-4 h-4" />
 
-              </p>
+                  Create Account
 
-            </div>
+                </span>
+
+              )}
+
+            </Button>
 
 
             {/* ================================================= */}
-            {/* REASON */}
+            {/* LOGIN LINK */}
             {/* ================================================= */}
 
-            <div className="space-y-2">
+            <p className="text-center text-sm text-muted-foreground">
 
-              <Label htmlFor="reason">
+              Already have an account?{' '}
 
-                Reason for Request *
-
-              </Label>
-
-
-              <Textarea
-                id="reason"
-                name="reason"
-                placeholder="e.g., Major surgery, thalassemia treatment, accident..."
-                value={
-                  formData.reason
-                }
-                onChange={
-                  handleInputChange
-                }
-                className="min-h-[120px]"
-                required
-              />
-
-
-              <p className="text-xs text-muted-foreground">
-
-                Please provide enough information for
-                donors to understand the urgency and
-                purpose of the request.
-
-              </p>
-
-            </div>
-
-
-            {/* ================================================= */}
-            {/* BUTTONS */}
-            {/* ================================================= */}
-
-            <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t">
-
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1 sm:flex-none sm:w-32"
-                asChild
-                disabled={
-                  loading
-                }
+              <Link
+                href="/auth/login"
+                className="font-medium text-primary hover:underline"
               >
+                Sign In
+              </Link>
 
-                <Link
-                  href="/dashboard/requests"
-                >
-
-                  Cancel
-
-                </Link>
-
-              </Button>
-
-
-              <Button
-                type="submit"
-                disabled={
-                  loading ||
-                  !isFormValid
-                }
-                className="flex-1 bg-primary hover:bg-primary/90"
-              >
-
-                {loading ? (
-
-                  <span className="flex items-center gap-2">
-
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-
-                    Creating...
-
-                  </span>
-
-                ) : (
-
-                  'Create Request'
-
-                )}
-
-              </Button>
-
-            </div>
+            </p>
 
           </form>
-
-        </CardContent>
-
-      </Card>
-
-
-      {/* ================================================== */}
-      {/* INFORMATION */}
-      {/* ================================================== */}
-
-      <Card className="bg-muted/40 border-border">
-
-        <CardHeader className="pb-3">
-
-          <CardTitle className="text-base">
-
-            Important Notes
-
-          </CardTitle>
-
-        </CardHeader>
-
-
-        <CardContent className="text-sm text-muted-foreground space-y-2">
-
-          <p>
-            • Your request will be visible to donors
-            with compatible blood types.
-          </p>
-
-          <p>
-            • Each donor can offer one unit of blood
-            per active donation.
-          </p>
-
-          <p>
-            • Donors can coordinate with you through
-            the messaging system.
-          </p>
-
-          <p>
-            • Always follow proper medical protocols
-            and screening requirements for transfusions.
-          </p>
-
-          <p>
-            • You can track your request and donor
-            offers from the requests section.
-          </p>
 
         </CardContent>
 
