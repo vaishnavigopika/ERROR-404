@@ -30,18 +30,25 @@ import { BloodRequest, UserProfile } from '@/lib/types';
 type RequestWithScheduling = BloodRequest & {
   requiredTimeStart?: string;
   requiredTimeEnd?: string;
+  location?: {
+    facilityName?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+  };
 };
 
 import {
   Droplet,
   Calendar,
   AlertCircle,
-  User,
   Plus,
   Clock,
   Edit,
   List,
   Heart,
+  MapPin,
 } from 'lucide-react';
 
 import { offerBloodDonation } from '@/lib/services/donationService';
@@ -222,6 +229,26 @@ function formatTimeWindow(
     request.requiredTimeEnd ||
     null
   );
+}
+
+function getRequestLocation(request: RequestWithScheduling): string {
+  const location = request.location;
+
+  if (!location || typeof location !== 'object') {
+    return 'Hospital / Blood Bank location not provided';
+  }
+
+  const parts = [
+    location.facilityName,
+    location.address,
+    location.city,
+    location.state,
+    location.pincode,
+  ].filter(Boolean);
+
+  return parts.length > 0
+    ? parts.join(', ')
+    : 'Hospital / Blood Bank location not provided';
 }
 
 function getCreatedAtTime(value: any): number {
@@ -933,14 +960,14 @@ export default function RequestsPage() {
     const quantity =
       getRequestQuantity(request);
 
-    const matchedCount =
-      request.matchedDonors?.length ?? 0;
-
     const expired =
       isRequestExpired(request);
 
     const timeWindow =
       formatTimeWindow(request);
+
+    const matchedCount =
+      request.matchedDonors?.length ?? 0;
 
     const fulfilled =
       quantity <= 0 ||
@@ -1036,18 +1063,14 @@ export default function RequestsPage() {
               </span>
             </div>
 
-            <div className="flex items-center gap-3 text-foreground/70">
-              <User className="w-4 h-4 text-primary flex-shrink-0" />
+            <div className="flex items-start gap-3 text-foreground/70">
+              <MapPin className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
 
               <span>
                 <span className="font-medium text-foreground">
-                  {matchedCount}
+                  Donation Location:
                 </span>{' '}
-                donor
-                {matchedCount !== 1
-                  ? 's'
-                  : ''}{' '}
-                matched
+                {getRequestLocation(request)}
               </span>
             </div>
           </div>
