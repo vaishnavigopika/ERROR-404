@@ -8,18 +8,12 @@ import {
   browserSessionPersistence,
   setPersistence,
   signInWithEmailAndPassword,
-<<<<<<< HEAD
 } from 'firebase/auth';
 
 import { doc, getDoc } from 'firebase/firestore';
 
 import { auth, db } from '@/lib/firebase';
 
-=======
-} from "firebase/auth";
-import { Eye, EyeOff } from 'lucide-react';
-import { auth } from '@/lib/firebase';
->>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -36,17 +30,16 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      // Keep the user's login session
+      // Keep the user logged in for the current browser session
       await setPersistence(auth, browserSessionPersistence);
 
-      // Login with Firebase Authentication
+      // Sign in with Firebase Authentication
       const userCredential = await signInWithEmailAndPassword(
         auth,
         email,
@@ -55,7 +48,7 @@ export default function LoginPage() {
 
       const firebaseUser = userCredential.user;
 
-      // Get the user's Firestore document
+      // Get the user's profile from Firestore
       const userRef = doc(db, 'users', firebaseUser.uid);
       const userSnap = await getDoc(userRef);
 
@@ -66,8 +59,6 @@ export default function LoginPage() {
       }
 
       const userData = userSnap.data();
-
-      // Get role from Firestore
       const role = userData.role;
 
       toast({
@@ -75,23 +66,22 @@ export default function LoginPage() {
         description: 'Logged in successfully!',
       });
 
-      // ADMIN → Admin Dashboard
+      // Admin → Admin Dashboard
       if (role === 'admin') {
         router.push('/admin');
         return;
       }
 
-      // DONOR / RECIPIENT → Normal User Dashboard
+      // Donor / Recipient → User Dashboard
       if (role === 'donor' || role === 'recipient') {
         router.push('/dashboard');
         return;
       }
 
-      // Unknown role
+      // Invalid / missing role
       throw new Error(
         'Your account does not have a valid role. Please contact the administrator.'
       );
-
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -107,9 +97,11 @@ export default function LoginPage() {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-6">
 
+        {/* Logo / Heading */}
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center gap-2 mb-4">
             <Heart className="w-8 h-8 text-primary fill-primary" />
+
             <span className="text-2xl font-bold text-foreground">
               BloodConnect
             </span>
@@ -124,14 +116,17 @@ export default function LoginPage() {
           </p>
         </div>
 
+        {/* Login Card */}
         <Card className="border-border">
           <CardContent className="pt-6">
 
             <form onSubmit={handleLogin} className="space-y-4">
 
-              {/* EMAIL */}
+              {/* Email */}
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">
+                  Email
+                </Label>
 
                 <Input
                   id="email"
@@ -144,11 +139,13 @@ export default function LoginPage() {
                 />
               </div>
 
-              {/* PASSWORD */}
+              {/* Password */}
               <div className="space-y-2">
 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password">
+                    Password
+                  </Label>
 
                   <Link
                     href="/auth/forgot-password"
@@ -157,13 +154,9 @@ export default function LoginPage() {
                     Forgot password?
                   </Link>
                 </div>
-<<<<<<< HEAD
 
                 <div className="relative">
 
-=======
-                <div className="relative">
->>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
                   <Input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
@@ -171,24 +164,15 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-<<<<<<< HEAD
-                    className="border-border pr-10"
-=======
                     className="border-border pr-12"
->>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
                   />
 
                   <button
                     type="button"
-<<<<<<< HEAD
-                    onClick={() => setShowPassword((prev) => !prev)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-=======
                     onClick={() =>
                       setShowPassword((prev) => !prev)
                     }
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
->>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
                     aria-label={
                       showPassword
                         ? 'Hide password'
@@ -196,24 +180,16 @@ export default function LoginPage() {
                     }
                   >
                     {showPassword ? (
-<<<<<<< HEAD
-                      <EyeOff className="h-5 w-5" />
-                    ) : (
-                      <Eye className="h-5 w-5" />
-                    )}
-                  </button>
-
-=======
                       <EyeOff className="w-5 h-5" />
                     ) : (
                       <Eye className="w-5 h-5" />
                     )}
                   </button>
->>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
+
                 </div>
               </div>
 
-              {/* LOGIN BUTTON */}
+              {/* Sign In */}
               <Button
                 type="submit"
                 disabled={loading}
@@ -224,6 +200,7 @@ export default function LoginPage() {
 
             </form>
 
+            {/* Sign Up */}
             <div className="mt-4 text-center text-sm">
               <p className="text-foreground/60">
                 Don't have an account?{' '}
