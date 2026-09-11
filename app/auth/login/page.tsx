@@ -8,12 +8,18 @@ import {
   browserSessionPersistence,
   setPersistence,
   signInWithEmailAndPassword,
+<<<<<<< HEAD
 } from 'firebase/auth';
 
 import { doc, getDoc } from 'firebase/firestore';
 
 import { auth, db } from '@/lib/firebase';
 
+=======
+} from "firebase/auth";
+import { Eye, EyeOff } from 'lucide-react';
+import { auth } from '@/lib/firebase';
+>>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -27,6 +33,7 @@ export default function LoginPage() {
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -150,9 +157,13 @@ export default function LoginPage() {
                     Forgot password?
                   </Link>
                 </div>
+<<<<<<< HEAD
 
                 <div className="relative">
 
+=======
+                <div className="relative">
+>>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
                   <Input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
@@ -160,13 +171,24 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
+<<<<<<< HEAD
                     className="border-border pr-10"
+=======
+                    className="border-border pr-12"
+>>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
                   />
 
                   <button
                     type="button"
+<<<<<<< HEAD
                     onClick={() => setShowPassword((prev) => !prev)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+=======
+                    onClick={() =>
+                      setShowPassword((prev) => !prev)
+                    }
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+>>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
                     aria-label={
                       showPassword
                         ? 'Hide password'
@@ -174,12 +196,20 @@ export default function LoginPage() {
                     }
                   >
                     {showPassword ? (
+<<<<<<< HEAD
                       <EyeOff className="h-5 w-5" />
                     ) : (
                       <Eye className="h-5 w-5" />
                     )}
                   </button>
 
+=======
+                      <EyeOff className="w-5 h-5" />
+                    ) : (
+                      <Eye className="w-5 h-5" />
+                    )}
+                  </button>
+>>>>>>> 0a219dcee28561c31268d66302e9e933b6c5cdd4
                 </div>
               </div>
 

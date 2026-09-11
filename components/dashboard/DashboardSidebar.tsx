@@ -66,7 +66,15 @@ export default function DashboardSidebar() {
       <nav className="p-4 space-y-2">
         {navigationItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+
+          // Overview should ONLY be active on /dashboard.
+          // Other sections stay active on their own page
+          // and any nested pages underneath them.
+          const isActive =
+            item.href === '/dashboard'
+              ? pathname === '/dashboard'
+              : pathname === item.href ||
+                pathname.startsWith(`${item.href}/`);
 
           return (
             <Link key={item.href} href={item.href}>

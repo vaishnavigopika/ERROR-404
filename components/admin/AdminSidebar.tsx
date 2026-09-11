@@ -9,7 +9,6 @@ import {
   Droplet,
   ClipboardList,
   BarChart3,
-  MessageSquare,
   Flag,
   Settings,
 } from 'lucide-react';
@@ -61,7 +60,14 @@ export default function AdminSidebar() {
       <nav className="p-4 space-y-2">
         {navigationItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+
+          // Dashboard should ONLY be active on /admin.
+          // Other sections remain active on their nested pages.
+          const isActive =
+            item.href === '/admin'
+              ? pathname === '/admin'
+              : pathname === item.href ||
+                pathname.startsWith(`${item.href}/`);
 
           return (
             <Link key={item.href} href={item.href}>
