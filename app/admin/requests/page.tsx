@@ -61,6 +61,8 @@ interface UserData {
   bloodType?: string;
 }
 
+type RequestCategory = 'active' | 'completed' | 'expired';
+
 const urgencyColors: Record<string, string> = {
   low: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100',
   medium:
@@ -78,35 +80,104 @@ const statusColors: Record<string, string> = {
     'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100',
   completed:
     'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-100',
+  expired:
+    'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100',
   cancelled:
     'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100',
 };
 
-function formatDate(value: any) {
-  if (!value) return 'Not specified';
+function parseDate(value: any): Date | null {
+  if (!value) return null;
 
   try {
     if (typeof value?.toDate === 'function') {
-      return value.toDate().toLocaleDateString();
+      const date = value.toDate();
+
+      return isNaN(date.getTime()) ? null : date;
     }
 
     const date = new Date(value);
 
-    if (isNaN(date.getTime())) {
-      return String(value);
-    }
-
-    return date.toLocaleDateString();
+    return isNaN(date.getTime()) ? null : date;
   } catch {
-    return String(value);
+    return null;
   }
 }
 
-function getDisplayStatus(request: BloodRequest) {
-  if (request.status) {
-    return request.status;
+function formatDate(value: any) {
+  const date = parseDate(value);
+
+  if (!date) {
+    return 'Not specified';
   }
 
+  return date.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+/*
+ * Determines whether the request's required date has passed.
+ */
+function isRequestExpired(request: BloodRequest) {
+  if (!request.requiredDate) {
+    return false;
+  }
+
+  const requiredDate = parseDate(request.requiredDate);
+
+  if (!requiredDate) {
+    return false;
+  }
+
+  const today = new Date();
+
+  /*
+   * Compare dates only, not the current time.
+   * This means a request remains active throughout
+   * its required date.
+   */
+  today.setHours(0, 0, 0, 0);
+  requiredDate.setHours(0, 0, 0, 0);
+
+  return requiredDate < today;
+}
+
+/*
+ * Returns the actual status to display.
+ */
+function getDisplayStatus(request: BloodRequest) {
+  const storedStatus = (request.status || '').toLowerCase();
+
+  // Completed always stays completed.
+  if (storedStatus === 'completed') {
+    return 'completed';
+  }
+
+  // Cancelled stays cancelled.
+  if (storedStatus === 'cancelled') {
+    return 'cancelled';
+  }
+
+  // Required date has passed.
+  if (isRequestExpired(request)) {
+    return 'expired';
+  }
+
+  // Existing status.
+  if (storedStatus === 'matched') {
+    return 'matched';
+  }
+
+  if (storedStatus === 'open') {
+    return 'open';
+  }
+
+  /*
+   * Fallback for old documents that don't have status.
+   */
   const remaining =
     typeof request.quantity === 'number'
       ? request.quantity
@@ -115,11 +186,37 @@ function getDisplayStatus(request: BloodRequest) {
   return remaining <= 0 ? 'matched' : 'open';
 }
 
+/*
+ * Categorize a request into one of the three tabs.
+ */
+function getRequestCategory(
+  request: BloodRequest
+): RequestCategory | null {
+  const status = getDisplayStatus(request);
+
+  if (status === 'completed') {
+    return 'completed';
+  }
+
+  if (status === 'expired') {
+    return 'expired';
+  }
+
+  if (status === 'open' || status === 'matched') {
+    return 'active';
+  }
+
+  return null;
+}
+
 export default function AdminRequestsPage() {
   const [requests, setRequests] = useState<BloodRequest[]>([]);
   const [users, setUsers] = useState<UserData[]>([]);
 
   const [search, setSearch] = useState('');
+
+  const [activeTab, setActiveTab] =
+    useState<RequestCategory>('active');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -145,6 +242,7 @@ export default function AdminRequestsPage() {
       },
       error => {
         console.error('Failed to load users:', error);
+
         setError(
           'Unable to load user information from Firebase.'
         );
@@ -171,17 +269,13 @@ export default function AdminRequestsPage() {
             ...doc.data(),
           })) as BloodRequest[];
 
-        // Newest requests first when createdAt exists.
+        // Newest first.
         loadedRequests.sort((a, b) => {
           const aDate =
-            a.createdAt?.toDate?.()?.getTime?.() ||
-            new Date(a.createdAt || 0).getTime() ||
-            0;
+            parseDate(a.createdAt)?.getTime() || 0;
 
           const bDate =
-            b.createdAt?.toDate?.()?.getTime?.() ||
-            new Date(b.createdAt || 0).getTime() ||
-            0;
+            parseDate(b.createdAt)?.getTime() || 0;
 
           return bDate - aDate;
         });
@@ -210,10 +304,10 @@ export default function AdminRequestsPage() {
   // RECIPIENT LOOKUP
   // ============================================================
 
-  function getRecipient(
-    recipientId?: string
-  ) {
-    if (!recipientId) return undefined;
+  function getRecipient(recipientId?: string) {
+    if (!recipientId) {
+      return undefined;
+    }
 
     return users.find(
       user => user.id === recipientId
@@ -221,7 +315,26 @@ export default function AdminRequestsPage() {
   }
 
   // ============================================================
-  // SEARCH
+  // REQUEST COUNTS
+  // ============================================================
+
+  const activeRequests = requests.filter(
+    request =>
+      getRequestCategory(request) === 'active'
+  );
+
+  const completedRequests = requests.filter(
+    request =>
+      getRequestCategory(request) === 'completed'
+  );
+
+  const expiredRequests = requests.filter(
+    request =>
+      getRequestCategory(request) === 'expired'
+  );
+
+  // ============================================================
+  // SEARCH + TAB FILTER
   // ============================================================
 
   const filteredRequests = useMemo(() => {
@@ -229,13 +342,20 @@ export default function AdminRequestsPage() {
       .trim()
       .toLowerCase();
 
+    const categoryRequests = requests.filter(
+      request =>
+        getRequestCategory(request) === activeTab
+    );
+
     if (!query) {
-      return requests;
+      return categoryRequests;
     }
 
-    return requests.filter(request => {
+    return categoryRequests.filter(request => {
       const recipient =
-        getRecipient(request.recipientId);
+        users.find(
+          user => user.id === request.recipientId
+        );
 
       const recipientName =
         recipient?.name || '';
@@ -270,21 +390,34 @@ export default function AdminRequestsPage() {
           .includes(query)
       );
     });
-  }, [requests, users, search]);
+  }, [
+    requests,
+    users,
+    search,
+    activeTab,
+  ]);
 
   // ============================================================
-  // COUNTS
+  // TAB CONFIGURATION
   // ============================================================
 
-  const openRequests = requests.filter(
-    request =>
-      getDisplayStatus(request) === 'open'
-  ).length;
-
-  const matchedRequests = requests.filter(
-    request =>
-      getDisplayStatus(request) === 'matched'
-  ).length;
+  const tabs = [
+    {
+      id: 'active' as RequestCategory,
+      label: 'Active Requests',
+      count: activeRequests.length,
+    },
+    {
+      id: 'completed' as RequestCategory,
+      label: 'Completed Requests',
+      count: completedRequests.length,
+    },
+    {
+      id: 'expired' as RequestCategory,
+      label: 'Expired Requests',
+      count: expiredRequests.length,
+    },
+  ];
 
   // ============================================================
   // RENDER
@@ -293,11 +426,9 @@ export default function AdminRequestsPage() {
   return (
     <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
 
-      {/* ====================================================== */}
       {/* HEADER */}
-      {/* ====================================================== */}
-
       <div className="space-y-4">
+
         <div>
           <h1 className="text-3xl font-bold text-foreground">
             Blood Requests
@@ -316,16 +447,14 @@ export default function AdminRequestsPage() {
             onChange={event =>
               setSearch(event.target.value)
             }
-            placeholder="Search by blood type, ID, or recipient..."
+            placeholder="Search by name, blood type, or request..."
             className="border-border pl-9"
           />
         </div>
+
       </div>
 
-      {/* ====================================================== */}
       {/* ERROR */}
-      {/* ====================================================== */}
-
       {error && (
         <Card className="border-destructive bg-destructive/5">
           <CardContent className="pt-6">
@@ -336,10 +465,7 @@ export default function AdminRequestsPage() {
         </Card>
       )}
 
-      {/* ====================================================== */}
       {/* SUMMARY */}
-      {/* ====================================================== */}
-
       <div className="grid md:grid-cols-3 gap-4">
 
         <Card className="border-border">
@@ -357,11 +483,11 @@ export default function AdminRequestsPage() {
         <Card className="border-border">
           <CardContent className="pt-6">
             <p className="text-sm text-foreground/60">
-              Open Requests
+              Active Requests
             </p>
 
             <p className="text-3xl font-bold text-green-600 mt-1">
-              {loading ? '—' : openRequests}
+              {loading ? '—' : activeRequests.length}
             </p>
           </CardContent>
         </Card>
@@ -369,14 +495,48 @@ export default function AdminRequestsPage() {
         <Card className="border-border">
           <CardContent className="pt-6">
             <p className="text-sm text-foreground/60">
-              Matched Requests
+              Completed Requests
             </p>
 
             <p className="text-3xl font-bold text-blue-600 mt-1">
-              {loading ? '—' : matchedRequests}
+              {loading ? '—' : completedRequests.length}
             </p>
           </CardContent>
         </Card>
+
+      </div>
+
+      {/* ====================================================== */}
+      {/* REQUEST TABS */}
+      {/* ====================================================== */}
+
+      <div className="flex flex-wrap gap-3">
+
+        {tabs.map(tab => (
+          <Button
+            key={tab.id}
+            type="button"
+            variant={
+              activeTab === tab.id
+                ? 'default'
+                : 'outline'
+            }
+            onClick={() =>
+              setActiveTab(tab.id)
+            }
+            className={
+              activeTab === tab.id
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : 'border-border'
+            }
+          >
+            {tab.label}
+
+            <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-background/70">
+              {tab.count}
+            </span>
+          </Button>
+        ))}
 
       </div>
 
@@ -387,8 +547,16 @@ export default function AdminRequestsPage() {
       <Card className="border-border overflow-hidden">
 
         <CardHeader>
+
           <CardTitle>
-            All Requests
+            {activeTab === 'active' &&
+              'Active Blood Requests'}
+
+            {activeTab === 'completed' &&
+              'Completed Blood Requests'}
+
+            {activeTab === 'expired' &&
+              'Expired Blood Requests'}
           </CardTitle>
 
           <CardDescription>
@@ -400,21 +568,27 @@ export default function AdminRequestsPage() {
                     : 's'
                 } found`}
           </CardDescription>
+
         </CardHeader>
 
         <CardContent>
 
           {loading ? (
             <div className="flex items-center justify-center py-16">
+
               <div className="text-center">
+
                 <Loader2 className="w-7 h-7 animate-spin text-primary mx-auto" />
 
                 <p className="text-sm text-foreground/60 mt-3">
                   Loading blood requests...
                 </p>
+
               </div>
+
             </div>
           ) : filteredRequests.length === 0 ? (
+
             <div className="text-center py-16">
 
               <Droplet className="w-10 h-10 text-foreground/30 mx-auto mb-3" />
@@ -422,26 +596,33 @@ export default function AdminRequestsPage() {
               <h3 className="font-semibold text-foreground">
                 {search
                   ? 'No matching requests'
-                  : 'No blood requests found'}
+                  : `No ${activeTab} requests`}
               </h3>
 
               <p className="text-sm text-foreground/60 mt-1">
                 {search
                   ? 'Try a different search term.'
-                  : 'Blood requests created by recipients will appear here.'}
+                  : activeTab === 'active'
+                  ? 'There are currently no active blood requests.'
+                  : activeTab === 'completed'
+                  ? 'Completed requests will appear here.'
+                  : 'Expired requests will appear here.'}
               </p>
 
             </div>
+
           ) : (
+
             <div className="overflow-x-auto">
 
               <table className="w-full text-sm">
 
                 <thead>
+
                   <tr className="border-b border-border">
 
                     <th className="text-left py-3 px-4 font-semibold text-foreground">
-                      Request ID
+                      Recipient
                     </th>
 
                     <th className="text-left py-3 px-4 font-semibold text-foreground">
@@ -461,6 +642,10 @@ export default function AdminRequestsPage() {
                     </th>
 
                     <th className="text-left py-3 px-4 font-semibold text-foreground">
+                      Required Date
+                    </th>
+
+                    <th className="text-left py-3 px-4 font-semibold text-foreground">
                       Matched Donors
                     </th>
 
@@ -469,11 +654,17 @@ export default function AdminRequestsPage() {
                     </th>
 
                   </tr>
+
                 </thead>
 
                 <tbody>
 
                   {filteredRequests.map(request => {
+
+                    const recipient =
+                      getRecipient(
+                        request.recipientId
+                      );
 
                     const matchedDonors =
                       Array.isArray(
@@ -497,12 +688,35 @@ export default function AdminRequestsPage() {
                         className="border-b border-border hover:bg-secondary/5 transition-colors"
                       >
 
-                        {/* Request ID */}
-                        <td className="py-3 px-4 font-mono text-foreground text-xs">
-                          #{request.id}
+                        {/* RECIPIENT NAME */}
+                        <td className="py-3 px-4">
+
+                          <div className="flex items-center gap-2">
+
+                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                              <User className="w-4 h-4 text-primary" />
+                            </div>
+
+                            <div>
+
+                              <p className="font-semibold text-foreground">
+                                {recipient?.name ||
+                                  'Unknown User'}
+                              </p>
+
+                              {recipient?.email && (
+                                <p className="text-xs text-foreground/50">
+                                  {recipient.email}
+                                </p>
+                              )}
+
+                            </div>
+
+                          </div>
+
                         </td>
 
-                        {/* Blood Type */}
+                        {/* BLOOD TYPE */}
                         <td className="py-3 px-4">
 
                           <Badge className="bg-primary/20 text-primary border-primary/30">
@@ -512,15 +726,18 @@ export default function AdminRequestsPage() {
 
                         </td>
 
-                        {/* Quantity */}
+                        {/* QUANTITY */}
                         <td className="py-3 px-4 text-foreground">
+
                           {remainingUnits}{' '}
+
                           {remainingUnits === 1
                             ? 'unit'
                             : 'units'}
+
                         </td>
 
-                        {/* Urgency */}
+                        {/* URGENCY */}
                         <td className="py-3 px-4">
 
                           <Badge
@@ -538,7 +755,7 @@ export default function AdminRequestsPage() {
 
                         </td>
 
-                        {/* Status */}
+                        {/* STATUS */}
                         <td className="py-3 px-4">
 
                           <Badge
@@ -554,12 +771,23 @@ export default function AdminRequestsPage() {
 
                         </td>
 
-                        {/* Matched Donors */}
+                        {/* REQUIRED DATE */}
                         <td className="py-3 px-4 text-foreground">
-                          {matchedDonors.length}
+
+                          {formatDate(
+                            request.requiredDate
+                          )}
+
                         </td>
 
-                        {/* View */}
+                        {/* MATCHED DONORS */}
+                        <td className="py-3 px-4 text-foreground">
+
+                          {matchedDonors.length}
+
+                        </td>
+
+                        {/* VIEW */}
                         <td className="py-3 px-4">
 
                           <Button
@@ -613,7 +841,8 @@ export default function AdminRequestsPage() {
             }
           >
 
-            {/* Modal Header */}
+            {/* MODAL HEADER */}
+
             <div className="flex items-start justify-between p-6 border-b border-border">
 
               <div>
@@ -627,6 +856,20 @@ export default function AdminRequestsPage() {
                   <Badge className="bg-primary/20 text-primary border-primary/30">
                     {selectedRequest.bloodType ||
                       'N/A'}
+                  </Badge>
+
+                  <Badge
+                    className={
+                      statusColors[
+                        getDisplayStatus(
+                          selectedRequest
+                        )
+                      ] || ''
+                    }
+                  >
+                    {getDisplayStatus(
+                      selectedRequest
+                    )}
                   </Badge>
 
                 </div>
@@ -650,10 +893,12 @@ export default function AdminRequestsPage() {
 
             </div>
 
-            {/* Modal Body */}
+            {/* MODAL BODY */}
+
             <div className="p-6 space-y-6">
 
-              {/* Recipient */}
+              {/* RECIPIENT */}
+
               <Card className="border-border">
 
                 <CardHeader className="pb-3">
@@ -668,14 +913,17 @@ export default function AdminRequestsPage() {
                 <CardContent>
 
                   {(() => {
+
                     const recipient =
                       getRecipient(
                         selectedRequest.recipientId
                       );
 
                     if (!recipient) {
+
                       return (
                         <div>
+
                           <p className="text-sm text-foreground">
                             Recipient profile not found
                           </p>
@@ -685,14 +933,17 @@ export default function AdminRequestsPage() {
                               ID: {selectedRequest.recipientId}
                             </p>
                           )}
+
                         </div>
                       );
+
                     }
 
                     return (
                       <div className="grid md:grid-cols-2 gap-4">
 
                         <div>
+
                           <p className="text-xs text-foreground/50">
                             Name
                           </p>
@@ -701,9 +952,11 @@ export default function AdminRequestsPage() {
                             {recipient.name ||
                               'Not provided'}
                           </p>
+
                         </div>
 
                         <div>
+
                           <p className="text-xs text-foreground/50">
                             Email
                           </p>
@@ -712,9 +965,11 @@ export default function AdminRequestsPage() {
                             {recipient.email ||
                               'Not provided'}
                           </p>
+
                         </div>
 
                         <div>
+
                           <p className="text-xs text-foreground/50">
                             Phone
                           </p>
@@ -723,9 +978,11 @@ export default function AdminRequestsPage() {
                             {recipient.phone ||
                               'Not provided'}
                           </p>
+
                         </div>
 
                         <div>
+
                           <p className="text-xs text-foreground/50">
                             User ID
                           </p>
@@ -733,17 +990,20 @@ export default function AdminRequestsPage() {
                           <p className="font-mono text-xs text-foreground mt-1 break-all">
                             {recipient.id}
                           </p>
+
                         </div>
 
                       </div>
                     );
+
                   })()}
 
                 </CardContent>
 
               </Card>
 
-              {/* Request Information */}
+              {/* REQUEST INFORMATION */}
+
               <Card className="border-border">
 
                 <CardHeader className="pb-3">
@@ -760,6 +1020,7 @@ export default function AdminRequestsPage() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 
                     <div>
+
                       <p className="text-xs text-foreground/50">
                         Blood Type
                       </p>
@@ -768,9 +1029,11 @@ export default function AdminRequestsPage() {
                         {selectedRequest.bloodType ||
                           'N/A'}
                       </p>
+
                     </div>
 
                     <div>
+
                       <p className="text-xs text-foreground/50">
                         Units Requested
                       </p>
@@ -779,9 +1042,11 @@ export default function AdminRequestsPage() {
                         {selectedRequest.unitsNeeded ||
                           0}
                       </p>
+
                     </div>
 
                     <div>
+
                       <p className="text-xs text-foreground/50">
                         Units Remaining
                       </p>
@@ -793,9 +1058,11 @@ export default function AdminRequestsPage() {
                           : selectedRequest.unitsNeeded ||
                             0}
                       </p>
+
                     </div>
 
                     <div>
+
                       <p className="text-xs text-foreground/50">
                         Received Outside App
                       </p>
@@ -804,6 +1071,7 @@ export default function AdminRequestsPage() {
                         {selectedRequest.unitsReceivedOutside ||
                           0}
                       </p>
+
                     </div>
 
                   </div>
@@ -811,6 +1079,7 @@ export default function AdminRequestsPage() {
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-5">
 
                     <div>
+
                       <p className="text-xs text-foreground/50">
                         Urgency
                       </p>
@@ -826,9 +1095,11 @@ export default function AdminRequestsPage() {
                         {selectedRequest.urgency ||
                           'N/A'}
                       </Badge>
+
                     </div>
 
                     <div>
+
                       <p className="text-xs text-foreground/50">
                         Status
                       </p>
@@ -846,9 +1117,11 @@ export default function AdminRequestsPage() {
                           selectedRequest
                         )}
                       </Badge>
+
                     </div>
 
                     <div>
+
                       <p className="text-xs text-foreground/50">
                         Matched Donors
                       </p>
@@ -861,6 +1134,7 @@ export default function AdminRequestsPage() {
                               .matchedDonors.length
                           : 0}
                       </p>
+
                     </div>
 
                   </div>
@@ -869,7 +1143,8 @@ export default function AdminRequestsPage() {
 
               </Card>
 
-              {/* Required Date / Time */}
+              {/* REQUIRED SCHEDULE */}
+
               <Card className="border-border">
 
                 <CardHeader className="pb-3">
@@ -890,6 +1165,7 @@ export default function AdminRequestsPage() {
                       <Calendar className="w-4 h-4 text-foreground/50 mt-1" />
 
                       <div>
+
                         <p className="text-xs text-foreground/50">
                           Required Date
                         </p>
@@ -899,6 +1175,7 @@ export default function AdminRequestsPage() {
                             selectedRequest.requiredDate
                           )}
                         </p>
+
                       </div>
 
                     </div>
@@ -908,6 +1185,7 @@ export default function AdminRequestsPage() {
                       <Clock className="w-4 h-4 text-foreground/50 mt-1" />
 
                       <div>
+
                         <p className="text-xs text-foreground/50">
                           Start Time
                         </p>
@@ -916,6 +1194,7 @@ export default function AdminRequestsPage() {
                           {selectedRequest.requiredTimeStart ||
                             'Not specified'}
                         </p>
+
                       </div>
 
                     </div>
@@ -925,6 +1204,7 @@ export default function AdminRequestsPage() {
                       <Clock className="w-4 h-4 text-foreground/50 mt-1" />
 
                       <div>
+
                         <p className="text-xs text-foreground/50">
                           End Time
                         </p>
@@ -933,6 +1213,7 @@ export default function AdminRequestsPage() {
                           {selectedRequest.requiredTimeEnd ||
                             'Not specified'}
                         </p>
+
                       </div>
 
                     </div>
@@ -943,7 +1224,8 @@ export default function AdminRequestsPage() {
 
               </Card>
 
-              {/* Reason */}
+              {/* REASON */}
+
               <Card className="border-border">
 
                 <CardHeader className="pb-3">
@@ -966,7 +1248,8 @@ export default function AdminRequestsPage() {
 
               </Card>
 
-              {/* Matched Donor IDs */}
+              {/* MATCHED DONORS */}
+
               <Card className="border-border">
 
                 <CardHeader className="pb-3">
@@ -989,10 +1272,13 @@ export default function AdminRequestsPage() {
                   ) ||
                   selectedRequest.matchedDonors
                     .length === 0 ? (
+
                     <p className="text-sm text-foreground/50">
                       No donors have been matched to this request yet.
                     </p>
+
                   ) : (
+
                     <div className="space-y-2">
 
                       {selectedRequest.matchedDonors.map(
@@ -1042,6 +1328,7 @@ export default function AdminRequestsPage() {
 
                             </div>
                           );
+
                         }
                       )}
 
@@ -1054,7 +1341,8 @@ export default function AdminRequestsPage() {
 
             </div>
 
-            {/* Modal Footer */}
+            {/* MODAL FOOTER */}
+
             <div className="flex justify-end p-6 border-t border-border">
 
               <Button
