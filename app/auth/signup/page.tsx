@@ -53,7 +53,6 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 
-
 export default function SignupPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -61,7 +60,8 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
 
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] =
+    useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -72,7 +72,6 @@ export default function SignupPage() {
     password: '',
     confirmPassword: '',
   });
-
 
   // ============================================================
   // INPUT HANDLER
@@ -89,7 +88,6 @@ export default function SignupPage() {
     }));
   };
 
-
   // ============================================================
   // SELECT HANDLER
   // ============================================================
@@ -104,6 +102,22 @@ export default function SignupPage() {
     }));
   };
 
+  // ============================================================
+  // PHONE HANDLER
+  // ============================================================
+
+  const handlePhoneChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const value = e.target.value
+      .replace(/\D/g, '')
+      .slice(0, 10);
+
+    setFormData((prev) => ({
+      ...prev,
+      phone: value,
+    }));
+  };
 
   // ============================================================
   // VALIDATION
@@ -130,10 +144,27 @@ export default function SignupPage() {
       return false;
     }
 
+    // Phone is optional.
+    // If entered, it must contain exactly 10 digits.
+    if (
+      formData.phone.trim() &&
+      !/^\d{10}$/.test(formData.phone.trim())
+    ) {
+      toast({
+        title: 'Invalid Phone Number',
+        description:
+          'Please enter a valid 10-digit Indian mobile number.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+
     if (!formData.role) {
       toast({
         title: 'Account Type Required',
-        description: 'Please select Donor or Recipient.',
+        description:
+          'Please select Donor or Recipient.',
         variant: 'destructive',
       });
 
@@ -143,7 +174,8 @@ export default function SignupPage() {
     if (!formData.bloodType) {
       toast({
         title: 'Blood Type Required',
-        description: 'Please select your blood type.',
+        description:
+          'Please select your blood type.',
         variant: 'destructive',
       });
 
@@ -157,7 +189,8 @@ export default function SignupPage() {
     ) {
       toast({
         title: 'Invalid Blood Type',
-        description: 'Please select a valid blood type.',
+        description:
+          'Please select a valid blood type.',
         variant: 'destructive',
       });
 
@@ -192,7 +225,6 @@ export default function SignupPage() {
     return true;
   };
 
-
   // ============================================================
   // SIGN UP
   // ============================================================
@@ -224,7 +256,6 @@ export default function SignupPage() {
 
       createdUser = credential.user;
 
-
       // --------------------------------------------------------
       // SET DISPLAY NAME
       // --------------------------------------------------------
@@ -236,6 +267,13 @@ export default function SignupPage() {
         }
       );
 
+      // --------------------------------------------------------
+      // FORMAT PHONE NUMBER
+      // --------------------------------------------------------
+
+      const formattedPhone = formData.phone.trim()
+        ? `+91${formData.phone.trim()}`
+        : '';
 
       // --------------------------------------------------------
       // CREATE FIRESTORE USER PROFILE
@@ -252,7 +290,8 @@ export default function SignupPage() {
 
           email: formData.email.trim(),
 
-          phone: formData.phone.trim(),
+          // Store Indian number in international format.
+          phone: formattedPhone,
 
           role: formData.role,
 
@@ -263,7 +302,7 @@ export default function SignupPage() {
 
           isAvailable:
             formData.role === 'donor',
-          
+
           onboardingCompleted: false,
 
           createdAt: serverTimestamp(),
@@ -271,7 +310,6 @@ export default function SignupPage() {
           updatedAt: serverTimestamp(),
         }
       );
-
 
       // --------------------------------------------------------
       // SUCCESS
@@ -286,12 +324,10 @@ export default function SignupPage() {
       router.push('/onboarding');
 
     } catch (error: any) {
-
       console.error(
         'Signup error:',
         error
       );
-
 
       // --------------------------------------------------------
       // ROLLBACK AUTH ACCOUNT IF FIRESTORE FAILED
@@ -308,7 +344,6 @@ export default function SignupPage() {
         }
       }
 
-
       // --------------------------------------------------------
       // FIREBASE ERROR MESSAGES
       // --------------------------------------------------------
@@ -317,7 +352,6 @@ export default function SignupPage() {
         'Could not create your account. Please try again.';
 
       switch (error?.code) {
-
         case 'auth/email-already-in-use':
           message =
             'An account with this email already exists.';
@@ -354,7 +388,6 @@ export default function SignupPage() {
           }
       }
 
-
       toast({
         title: 'Signup Failed',
         description: message,
@@ -366,7 +399,6 @@ export default function SignupPage() {
     }
   };
 
-
   // ============================================================
   // UI
   // ============================================================
@@ -376,9 +408,9 @@ export default function SignupPage() {
 
       <Card className="w-full max-w-lg border-border shadow-sm">
 
-        {/* ================================================== */}
-        {/* HEADER */}
-        {/* ================================================== */}
+        {/* ==================================================
+            HEADER
+        ================================================== */}
 
         <CardHeader className="space-y-4">
 
@@ -410,10 +442,9 @@ export default function SignupPage() {
 
         </CardHeader>
 
-
-        {/* ================================================== */}
-        {/* FORM */}
-        {/* ================================================== */}
+        {/* ==================================================
+            FORM
+        ================================================== */}
 
         <CardContent>
 
@@ -422,9 +453,9 @@ export default function SignupPage() {
             className="space-y-5"
           >
 
-            {/* ================================================= */}
-            {/* NAME */}
-            {/* ================================================= */}
+            {/* =================================================
+                NAME
+            ================================================= */}
 
             <div className="space-y-2">
 
@@ -445,10 +476,9 @@ export default function SignupPage() {
 
             </div>
 
-
-            {/* ================================================= */}
-            {/* EMAIL */}
-            {/* ================================================= */}
+            {/* =================================================
+                EMAIL
+            ================================================= */}
 
             <div className="space-y-2">
 
@@ -469,10 +499,9 @@ export default function SignupPage() {
 
             </div>
 
-
-            {/* ================================================= */}
-            {/* PHONE */}
-            {/* ================================================= */}
+            {/* =================================================
+                PHONE
+            ================================================= */}
 
             <div className="space-y-2">
 
@@ -480,27 +509,38 @@ export default function SignupPage() {
                 Phone Number
               </Label>
 
-              <Input
-                id="phone"
-                name="phone"
-                type="tel"
-                placeholder="Enter your phone number"
-                value={formData.phone}
-                onChange={handleInputChange}
-                disabled={loading}
-              />
+              <div className="flex">
+
+                {/* INDIA COUNTRY CODE */}
+
+                <div className="flex items-center px-3 border border-r-0 border-input rounded-l-md bg-muted text-sm font-medium">
+                  +91
+                </div>
+
+                <Input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  inputMode="numeric"
+                  placeholder="9876543210"
+                  value={formData.phone}
+                  onChange={handlePhoneChange}
+                  disabled={loading}
+                  className="rounded-l-none"
+                  maxLength={10}
+                />
+
+              </div>
 
               <p className="text-xs text-muted-foreground">
-                Optional. This may help donors or recipients
-                coordinate with you.
+                Optional. Enter your 10-digit Indian mobile number.
               </p>
 
             </div>
 
-
-            {/* ================================================= */}
-            {/* ROLE */}
-            {/* ================================================= */}
+            {/* =================================================
+                ROLE
+            ================================================= */}
 
             <div className="space-y-2">
 
@@ -541,10 +581,9 @@ export default function SignupPage() {
 
             </div>
 
-
-            {/* ================================================= */}
-            {/* BLOOD TYPE */}
-            {/* ================================================= */}
+            {/* =================================================
+                BLOOD TYPE
+            ================================================= */}
 
             <div className="space-y-2">
 
@@ -564,23 +603,23 @@ export default function SignupPage() {
               >
 
                 <SelectTrigger id="bloodType">
+
                   <SelectValue
                     placeholder="Select your blood type"
                   />
+
                 </SelectTrigger>
 
                 <SelectContent>
 
                   {BLOOD_TYPES.map(
                     (type) => (
-
                       <SelectItem
                         key={type}
                         value={type}
                       >
                         {type}
                       </SelectItem>
-
                     )
                   )}
 
@@ -590,10 +629,9 @@ export default function SignupPage() {
 
             </div>
 
-
-            {/* ================================================= */}
-            {/* PASSWORD */}
-            {/* ================================================= */}
+            {/* =================================================
+                PASSWORD
+            ================================================= */}
 
             <div className="space-y-2">
 
@@ -651,10 +689,9 @@ export default function SignupPage() {
 
             </div>
 
-
-            {/* ================================================= */}
-            {/* CONFIRM PASSWORD */}
-            {/* ================================================= */}
+            {/* =================================================
+                CONFIRM PASSWORD
+            ================================================= */}
 
             <div className="space-y-2">
 
@@ -710,10 +747,9 @@ export default function SignupPage() {
 
             </div>
 
-
-            {/* ================================================= */}
-            {/* SUBMIT */}
-            {/* ================================================= */}
+            {/* =================================================
+                SUBMIT
+            ================================================= */}
 
             <Button
               type="submit"
@@ -745,10 +781,9 @@ export default function SignupPage() {
 
             </Button>
 
-
-            {/* ================================================= */}
-            {/* LOGIN LINK */}
-            {/* ================================================= */}
+            {/* =================================================
+                LOGIN LINK
+            ================================================= */}
 
             <p className="text-center text-sm text-muted-foreground">
 

@@ -1,11 +1,16 @@
 'use client';
 
 import React from 'react';
-
 import { useEffect, useState } from 'react';
+
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+
+import {
+  doc,
+  getDoc,
+  updateDoc,
+} from 'firebase/firestore';
 
 import {
   Card,
@@ -22,7 +27,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 
 import { useToast } from '@/hooks/use-toast';
-
 import { UserProfile } from '@/lib/types';
 
 import {
@@ -31,9 +35,7 @@ import {
   Heart,
 } from 'lucide-react';
 
-
 export default function ProfilePage() {
-
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -46,124 +48,98 @@ export default function ProfilePage() {
   const [saving, setSaving] =
     useState(false);
 
-
-  // ============================================================
-  // FORM DATA
-  // ============================================================
-
   const [formData, setFormData] = useState({
-
     name: '',
-
-    phoneNumber: '',
-
+    phone: '',
     college: '',
-
     year: '',
-
     medicalHistory: '',
-
     isAvailable: true,
-
     location: {
       address: '',
       latitude: 0,
       longitude: 0,
     },
-
   });
-
 
   // ============================================================
   // FETCH PROFILE
   // ============================================================
 
   useEffect(() => {
-
     const fetchProfile = async () => {
-
       if (!user) {
         setLoading(false);
         return;
       }
 
       try {
+        const docRef = doc(
+          db,
+          'users',
+          user.uid
+        );
 
-        const docRef =
-          doc(db, 'users', user.uid);
-
-        const docSnap =
-          await getDoc(docRef);
-
+        const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
-
           const profile =
-            docSnap.data() as UserProfile;
-
+            docSnap.data() as UserProfile & {
+              phone?: string;
+              phoneNumber?: string;
+              college?: string;
+              year?: string;
+              medicalHistory?: string;
+              location?: {
+                address?: string;
+                latitude?: number;
+                longitude?: number;
+              };
+            };
 
           setUserProfile(profile);
 
+          // Support both the new "phone" field
+          // and older "phoneNumber" records.
+          const storedPhone =
+            profile.phone ||
+            profile.phoneNumber ||
+            '';
 
-          // ----------------------------------------------------
-          // IMPORTANT:
-          // Older/newly-created users may not have all fields.
-          // Give every missing field a safe default.
-          // ----------------------------------------------------
+          // Remove +91 from the value shown
+          // inside the editable phone input.
+          const cleanPhone =
+            storedPhone
+              .replace(/^\+91/, '')
+              .replace(/\D/g, '')
+              .slice(0, 10);
 
           setFormData({
+            name: profile.name || '',
 
-            name:
-              profile.name || '',
+            phone: cleanPhone,
 
-            // Your signup page stores "phone",
-            // while the old profile page expected "phoneNumber".
-            phoneNumber:
-              (profile as any).phoneNumber ||
-              (profile as any).phone ||
-              '',
+            college: profile.college || '',
 
-            college:
-              (profile as any).college ||
-              '',
-
-            year:
-              (profile as any).year ||
-              '',
+            year: profile.year || '',
 
             medicalHistory:
-              (profile as any).medicalHistory ||
-              '',
+              profile.medicalHistory || '',
 
             isAvailable:
-              typeof profile.isAvailable === 'boolean'
-                ? profile.isAvailable
-                : true,
-
-            // ------------------------------------------------
-            // THIS FIXES:
-            // Cannot read properties of undefined
-            // (reading 'address')
-            // ------------------------------------------------
+              profile.isAvailable ?? true,
 
             location: {
-
               address:
-                (profile as any).location?.address ||
-                '',
+                profile.location?.address || '',
 
               latitude:
-                (profile as any).location?.latitude ||
-                0,
+                profile.location?.latitude || 0,
 
               longitude:
-                (profile as any).location?.longitude ||
-                0,
-
+                profile.location?.longitude || 0,
             },
-
           });
-
         }
 
       } catch (error) {
@@ -174,14 +150,10 @@ export default function ProfilePage() {
         );
 
         toast({
-
           title: 'Error',
-
           description:
             'Failed to load profile',
-
           variant: 'destructive',
-
         });
 
       } finally {
@@ -189,14 +161,11 @@ export default function ProfilePage() {
         setLoading(false);
 
       }
-
     };
-
 
     fetchProfile();
 
   }, [user, toast]);
-
 
   // ============================================================
   // INPUT HANDLER
@@ -204,27 +173,36 @@ export default function ProfilePage() {
 
   const handleInputChange = (
     e: React.ChangeEvent<
-      HTMLInputElement |
-      HTMLTextAreaElement
+      HTMLInputElement | HTMLTextAreaElement
     >
   ) => {
-
     const {
       name,
       value,
     } = e.target;
 
-
-    setFormData(prev => ({
-
+    setFormData((prev) => ({
       ...prev,
-
       [name]: value,
-
     }));
-
   };
 
+  // ============================================================
+  // PHONE HANDLER
+  // ============================================================
+
+  const handlePhoneChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const value = e.target.value
+      .replace(/\D/g, '')
+      .slice(0, 10);
+
+    setFormData((prev) => ({
+      ...prev,
+      phone: value,
+    }));
+  };
 
   // ============================================================
   // LOCATION HANDLER
@@ -233,115 +211,142 @@ export default function ProfilePage() {
   const handleLocationChange = (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
-
     const {
       name,
       value,
     } = e.target;
 
-
-    setFormData(prev => ({
-
+    setFormData((prev) => ({
       ...prev,
 
       location: {
-
         ...prev.location,
-
         [name]: value,
-
       },
-
     }));
-
   };
-
 
   // ============================================================
   // SAVE PROFILE
   // ============================================================
 
   const handleSave = async () => {
+    if (!user) {
+      return;
+    }
 
-    if (!user) return;
+    // Validate phone if entered.
+    if (
+      formData.phone.trim() &&
+      !/^\d{10}$/.test(
+        formData.phone.trim()
+      )
+    ) {
+      toast({
+        title: 'Invalid Phone Number',
+        description:
+          'Please enter a valid 10-digit Indian mobile number.',
+        variant: 'destructive',
+      });
+
+      return;
+    }
 
     setSaving(true);
 
     try {
 
-      const docRef =
-        doc(db, 'users', user.uid);
+      const docRef = doc(
+        db,
+        'users',
+        user.uid
+      );
 
+      // Convert local 10-digit number
+      // into international Indian format.
+      const formattedPhone =
+        formData.phone.trim()
+          ? `+91${formData.phone.trim()}`
+          : '';
 
       await updateDoc(
         docRef,
         {
+          name: formData.name.trim(),
 
-          ...formData,
+          // Primary field used throughout
+          // the BloodConnect application.
+          phone: formattedPhone,
 
-          // Keep both names compatible with
-          // the signup-created profile.
-          phone:
-            formData.phoneNumber,
+          // Keep this for compatibility with
+          // older profile records.
+          phoneNumber: formattedPhone,
 
-          phoneNumber:
-            formData.phoneNumber,
+          college:
+            formData.college.trim(),
+
+          year:
+            formData.year.trim(),
+
+          medicalHistory:
+            formData.medicalHistory.trim(),
+
+          isAvailable:
+            formData.isAvailable,
+
+          location: {
+            ...formData.location,
+            address:
+              formData.location.address.trim(),
+          },
 
           updatedAt:
             new Date().toISOString(),
-
         }
       );
 
-
-      // Update local profile state too
-      setUserProfile(prev => {
-
-        if (!prev) return prev;
-
-        return {
-
-          ...prev,
-
-          ...formData,
-
-          phone:
-            formData.phoneNumber,
-
-          phoneNumber:
-            formData.phoneNumber,
-
-        } as UserProfile;
-
-      });
-
+      // Update local profile state too.
+      setUserProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              name: formData.name.trim(),
+              phone: formattedPhone,
+              phoneNumber: formattedPhone,
+              college: formData.college.trim(),
+              year: formData.year.trim(),
+              medicalHistory:
+                formData.medicalHistory.trim(),
+              isAvailable:
+                formData.isAvailable,
+              location: {
+                ...formData.location,
+                address:
+                  formData.location.address.trim(),
+              },
+            }
+          : prev
+      );
 
       toast({
-
         title: 'Success',
-
         description:
           'Profile updated successfully!',
-
       });
 
     } catch (error: any) {
 
       console.error(
-        'Error updating profile:',
+        'Profile update error:',
         error
       );
 
       toast({
-
         title: 'Error',
-
         description:
           error?.message ||
           'Failed to update profile',
-
         variant: 'destructive',
-
       });
 
     } finally {
@@ -349,34 +354,19 @@ export default function ProfilePage() {
       setSaving(false);
 
     }
-
   };
-
 
   // ============================================================
   // LOADING
   // ============================================================
 
   if (loading) {
-
     return (
-
       <div className="flex items-center justify-center h-screen">
 
         <div className="text-center">
 
-          <div
-            className="
-              w-12 h-12
-              border-4
-              border-primary
-              border-t-transparent
-              rounded-full
-              animate-spin
-              mx-auto
-              mb-4
-            "
-          />
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
 
           <p className="text-foreground">
             Loading profile...
@@ -385,23 +375,19 @@ export default function ProfilePage() {
         </div>
 
       </div>
-
     );
-
   }
 
-
   // ============================================================
-  // MAIN PAGE
+  // PAGE
   // ============================================================
 
   return (
-
     <div className="p-6 md:p-8 space-y-8 max-w-2xl">
 
-      {/* ====================================================== */}
-      {/* HEADER */}
-      {/* ====================================================== */}
+      {/* ========================================================
+          HEADER
+      ======================================================== */}
 
       <div>
 
@@ -415,13 +401,11 @@ export default function ProfilePage() {
 
       </div>
 
-
       <div className="space-y-6">
 
-
-        {/* ==================================================== */}
-        {/* PERSONAL INFORMATION */}
-        {/* ==================================================== */}
+        {/* ======================================================
+            PERSONAL INFORMATION
+        ====================================================== */}
 
         <Card className="border-border">
 
@@ -441,9 +425,7 @@ export default function ProfilePage() {
 
           </CardHeader>
 
-
           <CardContent className="space-y-4">
-
 
             {/* NAME */}
 
@@ -463,26 +445,41 @@ export default function ProfilePage() {
 
             </div>
 
-
             {/* PHONE */}
 
             <div className="space-y-2">
 
-              <Label htmlFor="phoneNumber">
+              <Label htmlFor="phone">
                 Phone Number
               </Label>
 
-              <Input
-                id="phoneNumber"
-                name="phoneNumber"
-                type="tel"
-                value={formData.phoneNumber}
-                onChange={handleInputChange}
-                className="border-border"
-              />
+              <div className="flex">
+
+                {/* INDIA COUNTRY CODE */}
+
+                <div className="flex items-center px-3 border border-r-0 border-input rounded-l-md bg-muted text-sm font-medium">
+                  +91
+                </div>
+
+                <Input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  inputMode="numeric"
+                  placeholder="9876543210"
+                  value={formData.phone}
+                  onChange={handlePhoneChange}
+                  className="border-border rounded-l-none"
+                  maxLength={10}
+                />
+
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Enter your 10-digit Indian mobile number.
+              </p>
 
             </div>
-
 
             {/* EMAIL */}
 
@@ -494,13 +491,14 @@ export default function ProfilePage() {
 
               <Input
                 id="email"
-                value={userProfile?.email || ''}
+                value={
+                  userProfile?.email || ''
+                }
                 disabled
                 className="border-border bg-muted"
               />
 
             </div>
-
 
             {/* BLOOD TYPE */}
 
@@ -512,22 +510,10 @@ export default function ProfilePage() {
 
               <div className="flex items-center gap-2">
 
-                <Heart
-                  className="
-                    w-5 h-5
-                    text-primary
-                    fill-primary
-                  "
-                />
+                <Heart className="w-5 h-5 text-primary fill-primary" />
 
-                <span
-                  className="
-                    text-lg
-                    font-semibold
-                    text-primary
-                  "
-                >
-                  {userProfile?.bloodType || 'Not set'}
+                <span className="text-lg font-semibold text-primary">
+                  {userProfile?.bloodType || '—'}
                 </span>
 
               </div>
@@ -538,10 +524,9 @@ export default function ProfilePage() {
 
         </Card>
 
-
-        {/* ==================================================== */}
-        {/* LOCATION INFORMATION */}
-        {/* ==================================================== */}
+        {/* ======================================================
+            LOCATION INFORMATION
+        ====================================================== */}
 
         <Card className="border-border">
 
@@ -561,9 +546,7 @@ export default function ProfilePage() {
 
           </CardHeader>
 
-
           <CardContent className="space-y-4">
-
 
             {/* COLLEGE */}
 
@@ -583,7 +566,6 @@ export default function ProfilePage() {
 
             </div>
 
-
             {/* ADDRESS */}
 
             <div className="space-y-2">
@@ -596,7 +578,7 @@ export default function ProfilePage() {
                 id="address"
                 name="address"
                 value={
-                  formData.location?.address || ''
+                  formData.location.address
                 }
                 onChange={handleLocationChange}
                 placeholder="Your full address"
@@ -609,10 +591,9 @@ export default function ProfilePage() {
 
         </Card>
 
-
-        {/* ==================================================== */}
-        {/* MEDICAL INFORMATION */}
-        {/* ==================================================== */}
+        {/* ======================================================
+            MEDICAL INFORMATION
+        ====================================================== */}
 
         <Card className="border-border">
 
@@ -632,9 +613,7 @@ export default function ProfilePage() {
 
           </CardHeader>
 
-
           <CardContent className="space-y-4">
-
 
             {/* MEDICAL HISTORY */}
 
@@ -648,7 +627,9 @@ export default function ProfilePage() {
                 id="medicalHistory"
                 name="medicalHistory"
                 placeholder="Any relevant medical conditions or allergies..."
-                value={formData.medicalHistory}
+                value={
+                  formData.medicalHistory
+                }
                 onChange={handleInputChange}
                 className="border-border"
                 rows={4}
@@ -656,21 +637,9 @@ export default function ProfilePage() {
 
             </div>
 
+            {/* DONATION AVAILABILITY */}
 
-            {/* AVAILABILITY */}
-
-            <div
-              className="
-                flex
-                items-center
-                justify-between
-                p-3
-                bg-secondary/5
-                rounded-lg
-                border
-                border-border
-              "
-            >
+            <div className="flex items-center justify-between p-3 bg-secondary/5 rounded-lg border border-border">
 
               <div>
 
@@ -688,11 +657,10 @@ export default function ProfilePage() {
 
               </div>
 
-
               <Switch
                 checked={formData.isAvailable}
                 onCheckedChange={(checked) =>
-                  setFormData(prev => ({
+                  setFormData((prev) => ({
                     ...prev,
                     isAvailable: checked,
                   }))
@@ -705,10 +673,9 @@ export default function ProfilePage() {
 
         </Card>
 
-
-        {/* ==================================================== */}
-        {/* ACCOUNT STATISTICS */}
-        {/* ==================================================== */}
+        {/* ======================================================
+            ACCOUNT STATISTICS
+        ====================================================== */}
 
         <Card className="border-border bg-secondary/5">
 
@@ -720,11 +687,7 @@ export default function ProfilePage() {
 
           </CardHeader>
 
-
           <CardContent className="space-y-3">
-
-
-            {/* TOTAL DONATIONS */}
 
             <div className="flex justify-between">
 
@@ -733,15 +696,10 @@ export default function ProfilePage() {
               </span>
 
               <span className="font-semibold text-foreground">
-
                 {userProfile?.totalDonations || 0}
-
               </span>
 
             </div>
-
-
-            {/* ACCOUNT TYPE */}
 
             <div className="flex justify-between">
 
@@ -750,15 +708,10 @@ export default function ProfilePage() {
               </span>
 
               <span className="font-semibold text-foreground capitalize">
-
-                {userProfile?.role || 'Not set'}
-
+                {userProfile?.role || '—'}
               </span>
 
             </div>
-
-
-            {/* LAST DONATION */}
 
             {userProfile?.lastDonation && (
 
@@ -784,20 +737,14 @@ export default function ProfilePage() {
 
         </Card>
 
-
-        {/* ==================================================== */}
-        {/* SAVE BUTTON */}
-        {/* ==================================================== */}
+        {/* ======================================================
+            SAVE BUTTON
+        ====================================================== */}
 
         <Button
           onClick={handleSave}
           disabled={saving}
-          className="
-            w-full
-            bg-primary
-            text-primary-foreground
-            hover:bg-primary/90
-          "
+          className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
           size="lg"
         >
 
@@ -807,11 +754,8 @@ export default function ProfilePage() {
 
         </Button>
 
-
       </div>
 
     </div>
-
   );
-
 }
