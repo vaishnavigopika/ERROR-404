@@ -1166,6 +1166,14 @@ export async function cancelDonation(
 // UPDATE BLOOD REQUEST
 // ============================================================
 
+interface UpdateBloodRequestLocation {
+  facilityName: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode?: string;
+}
+
 interface UpdateBloodRequestInput {
   bloodType?: BloodType;
   unitsNeeded: number;
@@ -1175,6 +1183,7 @@ interface UpdateBloodRequestInput {
   requiredDate: string;
   requiredTimeStart?: string;
   requiredTimeEnd?: string;
+  location: UpdateBloodRequestLocation;
 }
 
 export async function updateBloodRequest(
@@ -1196,6 +1205,29 @@ export async function updateBloodRequest(
 
   if (!updates.reason || updates.reason.trim().length < 10) {
     throw new Error('Reason must contain at least 10 characters.');
+  }
+
+  // Hospital / Blood Bank donation location.
+  // Facility name, address, city and state are required.
+  // Pincode is optional.
+  if (!updates.location) {
+    throw new Error('Hospital / Blood Bank donation location is required.');
+  }
+
+  if (!updates.location.facilityName?.trim()) {
+    throw new Error('Hospital / Blood Bank name is required.');
+  }
+
+  if (!updates.location.address?.trim()) {
+    throw new Error('Hospital / Blood Bank address is required.');
+  }
+
+  if (!updates.location.city?.trim()) {
+    throw new Error('City is required for the donation location.');
+  }
+
+  if (!updates.location.state?.trim()) {
+    throw new Error('State is required for the donation location.');
   }
 
   const requestRef = doc(db, 'bloodRequests', requestId);
@@ -1250,6 +1282,17 @@ export async function updateBloodRequest(
     requiredDate: updates.requiredDate,
     requiredTimeStart: updates.requiredTimeStart || null,
     requiredTimeEnd: updates.requiredTimeEnd || null,
+
+    // Hospital / Blood Bank donation location.
+    // Do not use recipient profile location here.
+    location: {
+      facilityName: updates.location.facilityName.trim(),
+      address: updates.location.address.trim(),
+      city: updates.location.city.trim(),
+      state: updates.location.state.trim(),
+      pincode: updates.location.pincode?.trim() || '',
+    },
+
     status: remainingUnits > 0 ? 'open' : 'matched',
     updatedAt: now,
   });
