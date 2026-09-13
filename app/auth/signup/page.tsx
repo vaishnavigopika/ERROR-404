@@ -522,7 +522,7 @@ export default function SignupPage() {
                   name="phone"
                   type="tel"
                   inputMode="numeric"
-                  placeholder="9876543210"
+                  placeholder="Enter your 10-digit mobile number"
                   value={formData.phone}
                   onChange={handlePhoneChange}
                   disabled={loading}

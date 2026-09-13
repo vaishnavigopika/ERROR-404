@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { BloodRequest, DonationRecord, UserProfile } from '@/lib/types';
 import { scheduleDonation } from '@/lib/services/donationService';
-import { ArrowLeft, Calendar, Clock, Droplet, Edit, Mail, MapPin, Phone, User, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Calendar, Clock, Droplet, Edit, Mail, MapPin, Phone, User, CheckCircle2, MessageCircle } from 'lucide-react';
 
 interface RequestExtras {
   unitsReceivedOutside?: number;
@@ -53,6 +53,7 @@ function formatTime(value?: string) {
 export default function RequestDetailsPage() {
   const params = useParams<{ id: string }>();
   const requestId = params?.id;
+  const router = useRouter();
   const { user } = useAuth();
   const { toast } = useToast();
   const [request, setRequest] = useState<RequestWithExtras | null>(null);
@@ -64,39 +65,80 @@ export default function RequestDetailsPage() {
   const [scheduleTimes, setScheduleTimes] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    let active = true;
+
     const load = async () => {
-      if (!requestId) return;
+      if (!requestId) {
+        if (active) setLoading(false);
+        return;
+      }
+
       try {
         const requestSnap = await getDoc(doc(db, 'bloodRequests', requestId));
         if (!requestSnap.exists()) throw new Error('Blood request not found.');
+
         const data = { id: requestSnap.id, ...requestSnap.data() } as RequestWithExtras;
+        if (!active) return;
         setRequest(data);
 
         if (data.recipientId) {
           const recipientSnap = await getDoc(doc(db, 'users', data.recipientId));
-          if (recipientSnap.exists()) setRecipient(recipientSnap.data() as UserProfile & Record<string, any>);
+          if (active && recipientSnap.exists()) {
+            setRecipient(recipientSnap.data() as UserProfile & Record<string, any>);
+          }
         }
 
-        const donationSnap = await getDocs(query(collection(db, 'donations'), where('requestId', '==', requestId)));
-        const records = donationSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as (DonationRecord & Record<string, any>)[];
-        records.sort((a, b) => (toDate(b.createdAt)?.getTime() ?? 0) - (toDate(a.createdAt)?.getTime() ?? 0));
+        const donationSnap = await getDocs(
+          query(collection(db, 'donations'), where('requestId', '==', requestId))
+        );
+
+        const records = donationSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as (DonationRecord & Record<string, any>)[];
+
+        records.sort(
+          (a, b) =>
+            (toDate(b.createdAt)?.getTime() ?? 0) -
+            (toDate(a.createdAt)?.getTime() ?? 0)
+        );
+
+        if (!active) return;
         setDonations(records);
 
         const names: Record<string, string> = {};
         for (const donation of records) {
           if (!donation.donorId) continue;
+
           const snap = await getDoc(doc(db, 'users', donation.donorId));
-          if (snap.exists()) names[donation.donorId] = (snap.data() as any).name || 'BloodConnect Donor';
+          if (snap.exists()) {
+            names[donation.donorId] =
+              (snap.data() as any).name || 'BloodConnect Donor';
+          }
         }
-        setDonorNames(names);
+
+        if (active) setDonorNames(names);
       } catch (error: any) {
         console.error('Failed to load request details:', error);
-        toast({ title: 'Unable to Load Request', description: error?.message || 'Could not load request details.', variant: 'destructive' });
+
+        if (active) {
+          toast({
+            title: 'Unable to Load Request',
+            description:
+              error?.message || 'Could not load request details.',
+            variant: 'destructive',
+          });
+        }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
+
     load();
+
+    return () => {
+      active = false;
+    };
   }, [requestId, toast]);
 
   const isOwner = Boolean(user?.uid && request?.recipientId === user.uid);
@@ -105,188 +147,61 @@ export default function RequestDetailsPage() {
   const totalRequested = request?.unitsNeeded ?? request?.quantity ?? 0;
   const remaining = Math.max(
     0,
-    request?.quantity ??
-      Math.max(
-        0,
-        totalRequested -
-          bloodConnectReceived -
-          outsideReceived
-      )
+    totalRequested - bloodConnectReceived - outsideReceived
   );
 
   const offeredDonations = useMemo(() => donations.filter((d) => d.status === 'offered'), [donations]);
 
-  const handleSchedule = async (
-    donation: DonationRecord & Record<string, any>
-  ) => {
-    if (!user || !request || !isOwner) {
-      return;
-    }
+  const openDonationChat = (donation: DonationRecord & Record<string, any>) => {
+    if (!user || !request || request.recipientId !== user.uid) return;
 
-    const time =
-      scheduleTimes[donation.id] ||
-      request.requiredTimeStart ||
-      '';
-
-    if (!request.requiredDate) {
+    if (!donation.donorId) {
       toast({
-        title: 'Required Date Missing',
-        description:
-          'This blood request does not have a required date. Edit the request and add the date before scheduling a donor.',
+        title: 'Messaging Unavailable',
+        description: 'This donor does not have a valid donor ID.',
         variant: 'destructive',
       });
       return;
     }
 
-    if (!time) {
+    if (donation.status === 'cancelled') {
       toast({
-        title: 'Schedule Required',
-        description:
-          'Select the donation time before scheduling.',
+        title: 'Messaging Unavailable',
+        description: 'This donation offer has been cancelled.',
         variant: 'destructive',
       });
       return;
     }
 
-    // Build the appointment in the browser's local timezone.
-    const [year, month, day] =
-      request.requiredDate.split('-').map(Number);
-    const [hours, minutes] =
-      time.split(':').map(Number);
+    router.push(`/dashboard/messages?donationId=${encodeURIComponent(donation.id)}`);
+  };
 
-    const scheduledDate = new Date(
-      year,
-      month - 1,
-      day,
-      hours,
-      minutes,
-      0,
-      0
-    );
-
-    if (
-      !Number.isFinite(year) ||
-      !Number.isFinite(month) ||
-      !Number.isFinite(day) ||
-      !Number.isFinite(hours) ||
-      !Number.isFinite(minutes) ||
-      Number.isNaN(scheduledDate.getTime())
-    ) {
-      toast({
-        title: 'Invalid Appointment',
-        description:
-          'Please choose a valid donation time.',
-        variant: 'destructive',
-      });
+  const handleSchedule = async (donation: DonationRecord & Record<string, any>) => {
+    if (!user || !request || !isOwner) return;
+    const time = scheduleTimes[donation.id];
+    if (!request.requiredDate || !time) {
+      toast({ title: 'Schedule Required', description: 'Select the donation time before scheduling.', variant: 'destructive' });
       return;
     }
 
-    // Confirm JavaScript did not normalize an invalid date.
-    if (
-      scheduledDate.getFullYear() !== year ||
-      scheduledDate.getMonth() !== month - 1 ||
-      scheduledDate.getDate() !== day ||
-      scheduledDate.getHours() !== hours ||
-      scheduledDate.getMinutes() !== minutes
-    ) {
-      toast({
-        title: 'Invalid Appointment',
-        description:
-          'The selected donation date or time is invalid.',
-        variant: 'destructive',
-      });
+    const scheduledDate = new Date(`${request.requiredDate}T${time}:00`);
+    if (Number.isNaN(scheduledDate.getTime())) {
+      toast({ title: 'Invalid Time', description: 'Please select a valid donation time.', variant: 'destructive' });
       return;
     }
-
-    if (
-      request.requiredTimeStart &&
-      time < request.requiredTimeStart
-    ) {
-      toast({
-        title: 'Outside Required Window',
-        description:
-          `Choose a time at or after ${formatTime(
-            request.requiredTimeStart
-          )}.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (
-      request.requiredTimeEnd &&
-      time > request.requiredTimeEnd
-    ) {
-      toast({
-        title: 'Outside Required Window',
-        description:
-          `Choose a time at or before ${formatTime(
-            request.requiredTimeEnd
-          )}.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (scheduledDate.getTime() < Date.now()) {
-      toast({
-        title: 'Time Has Passed',
-        description:
-          'A donation appointment cannot be scheduled in the past.',
-        variant: 'destructive',
-      });
+    if (request.requiredTimeStart && time < request.requiredTimeStart || request.requiredTimeEnd && time > request.requiredTimeEnd) {
+      toast({ title: 'Outside Required Window', description: 'Choose a time within the recipient/hospital requested window.', variant: 'destructive' });
       return;
     }
 
     setSchedulingId(donation.id);
-
     try {
-      await scheduleDonation(
-        donation.id,
-        scheduledDate,
-        user.uid
-      );
-
-      setDonations((prev) =>
-        prev.map((d) =>
-          d.id === donation.id
-            ? {
-                ...d,
-                status: 'scheduled',
-                donationDate:
-                  scheduledDate.toISOString(),
-                scheduledBy: user.uid,
-              }
-            : d
-        )
-      );
-
-      toast({
-        title: 'Donation Scheduled',
-        description:
-          `The donor has been scheduled for ${formatDate(
-            scheduledDate
-          )} at ${scheduledDate.toLocaleTimeString(
-            'en-IN',
-            {
-              hour: 'numeric',
-              minute: '2-digit',
-            }
-          )}.`,
-      });
+      await scheduleDonation(donation.id, scheduledDate, user.uid);
+      setDonations((prev) => prev.map((d) => d.id === donation.id ? { ...d, status: 'scheduled', donationDate: scheduledDate.toISOString() } : d));
+      toast({ title: 'Donation Scheduled', description: 'The donor has been given the agreed donation date and time.' });
     } catch (error: any) {
-      console.error(
-        'Schedule donation failed:',
-        error
-      );
-
-      toast({
-        title: 'Scheduling Failed',
-        description:
-          error?.message ||
-          'Could not schedule the donation. Please try again.',
-        variant: 'destructive',
-      });
+      console.error('Schedule failed:', error);
+      toast({ title: 'Scheduling Failed', description: error?.message || 'Could not schedule the donation.', variant: 'destructive' });
     } finally {
       setSchedulingId(null);
     }
@@ -360,72 +275,24 @@ export default function RequestDetailsPage() {
 
               {donation.status === 'scheduled' && <div className="text-sm flex items-center gap-2 text-blue-700 dark:text-blue-300"><CheckCircle2 className="w-4 h-4" />Scheduled for {formatDate(donation.donationDate)} at {toDate(donation.donationDate)?.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}</div>}
 
+              {isOwner && donation.status !== 'cancelled' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                  onClick={() => openDonationChat(donation)}
+                >
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  Message Donor
+                </Button>
+              )}
+
               {isOwner && donation.status === 'offered' && (
-                <div className="rounded-lg bg-muted/40 p-4 space-y-4">
-                  <div>
-                    <p className="text-sm font-semibold">
-                      Schedule this donor
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      You choose the appointment. It must be on{' '}
-                      <strong>
-                        {formatDate(request.requiredDate)}
-                      </strong>
-                      {request.requiredTimeStart &&
-                      request.requiredTimeEnd
-                        ? ` between ${formatTime(
-                            request.requiredTimeStart
-                          )} and ${formatTime(
-                            request.requiredTimeEnd
-                          )}.`
-                        : '.'}
-                    </p>
-                  </div>
-
+                <div className="rounded-lg bg-muted/40 p-4 space-y-3">
+                  <p className="text-sm font-medium">Schedule this donor within the requested window</p>
                   <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
-                    <div className="space-y-2 flex-1">
-                      <Label htmlFor={`time-${donation.id}`}>
-                        Donation time
-                      </Label>
-                      <Input
-                        id={`time-${donation.id}`}
-                        type="time"
-                        min={
-                          request.requiredTimeStart ||
-                          undefined
-                        }
-                        max={
-                          request.requiredTimeEnd ||
-                          undefined
-                        }
-                        value={
-                          scheduleTimes[donation.id] ||
-                          request.requiredTimeStart ||
-                          ''
-                        }
-                        onChange={(e) =>
-                          setScheduleTimes((prev) => ({
-                            ...prev,
-                            [donation.id]:
-                              e.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-
-                    <Button
-                      type="button"
-                      onClick={() =>
-                        handleSchedule(donation)
-                      }
-                      disabled={
-                        schedulingId === donation.id
-                      }
-                    >
-                      {schedulingId === donation.id
-                        ? 'Scheduling...'
-                        : 'Schedule Donation'}
-                    </Button>
+                    <div className="space-y-2 flex-1"><Label>Donation time</Label><Input type="time" min={request.requiredTimeStart} max={request.requiredTimeEnd} value={scheduleTimes[donation.id] || request.requiredTimeStart || ''} onChange={(e) => setScheduleTimes((prev) => ({ ...prev, [donation.id]: e.target.value }))} /></div>
+                    <Button onClick={() => handleSchedule(donation)} disabled={schedulingId === donation.id}>{schedulingId === donation.id ? 'Scheduling...' : 'Schedule Donation'}</Button>
                   </div>
                 </div>
               )}

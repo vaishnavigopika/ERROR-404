@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 
@@ -33,6 +34,7 @@ import {
   XCircle,
   User,
   AlertCircle,
+  MessageCircle,
 } from 'lucide-react';
 
 import Link from 'next/link';
@@ -201,6 +203,8 @@ export default function DonationsPage() {
 
   const { user } =
     useAuth();
+
+  const router = useRouter();
 
 
   const [donations, setDonations] =
@@ -463,6 +467,31 @@ export default function DonationsPage() {
 
 
   // ==========================================================
+  // OPEN DONATION CHAT
+  // ==========================================================
+
+  const openDonationChat = (donation: DonationRecord) => {
+
+    if (!user) {
+      toast.error('Please sign in again.');
+      return;
+    }
+
+    if (!donation.recipientId) {
+      toast.error('Recipient information is unavailable for this donation.');
+      return;
+    }
+
+    if (donation.status === 'cancelled') {
+      toast.error('Messaging is unavailable for a cancelled donation.');
+      return;
+    }
+
+    router.push(`/dashboard/messages?donationId=${encodeURIComponent(donation.id)}`);
+  };
+
+
+  // ==========================================================
   // COMPLETE DONATION
   // ==========================================================
 
@@ -667,37 +696,15 @@ export default function DonationsPage() {
     );
   }
 
-
   // ==========================================================
-  // STATISTICS
+  // ACTIVE DONATIONS
   // ==========================================================
 
-  const totalDonations =
-    donorProfile?.totalDonations ??
-    donations.filter(
-      (donation) =>
-        donation.status ===
-        'completed'
-    ).length;
-
-
-  const activeDonations =
-    donations.filter(
-      (donation) =>
-        donation.status ===
-          'offered' ||
-        donation.status ===
-          'scheduled'
-    );
-
-
-  const completedDonations =
-    donations.filter(
-      (donation) =>
-        donation.status ===
-        'completed'
-    );
-
+  const activeDonations = donations.filter(
+    (donation) =>
+      donation.status === 'offered' ||
+      donation.status === 'scheduled'
+  );
 
   // ==========================================================
   // MAIN PAGE
@@ -722,109 +729,7 @@ export default function DonationsPage() {
         </p>
 
       </div>
-
-
-      {/* ================================================== */}
-      {/* SUMMARY CARDS */}
-      {/* ================================================== */}
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-
-        <Card>
-
-          <CardContent className="p-5">
-
-            <div className="flex items-center gap-3">
-
-              <div className="p-2 rounded-lg bg-primary/10">
-
-                <Droplet className="w-5 h-5 text-primary" />
-
-              </div>
-
-              <div>
-
-                <p className="text-sm text-muted-foreground">
-                  Total Donations
-                </p>
-
-                <p className="text-2xl font-bold">
-                  {totalDonations}
-                </p>
-
-              </div>
-
-            </div>
-
-          </CardContent>
-
-        </Card>
-
-
-        <Card>
-
-          <CardContent className="p-5">
-
-            <div className="flex items-center gap-3">
-
-              <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/40">
-
-                <Clock className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-
-              </div>
-
-              <div>
-
-                <p className="text-sm text-muted-foreground">
-                  Active Donations
-                </p>
-
-                <p className="text-2xl font-bold">
-                  {activeDonations.length}
-                </p>
-
-              </div>
-
-            </div>
-
-          </CardContent>
-
-        </Card>
-
-
-        <Card>
-
-          <CardContent className="p-5">
-
-            <div className="flex items-center gap-3">
-
-              <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/40">
-
-                <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
-
-              </div>
-
-              <div>
-
-                <p className="text-sm text-muted-foreground">
-                  Completed
-                </p>
-
-                <p className="text-2xl font-bold">
-                  {completedDonations.length}
-                </p>
-
-              </div>
-
-            </div>
-
-          </CardContent>
-
-        </Card>
-
-      </div>
-
-
+      
       {/* ================================================== */}
       {/* ACTIVE DONATION NOTICE */}
       {/* ================================================== */}
@@ -1238,6 +1143,22 @@ export default function DonationsPage() {
                     {/* ================================== */}
 
                     <div className="pt-4 border-t border-border flex flex-col sm:flex-row gap-3">
+
+                      {/* MESSAGE RECIPIENT */}
+
+                      {donation.recipientId &&
+                        donation.status !== 'cancelled' && (
+
+                        <Button
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => openDonationChat(donation)}
+                        >
+                          <MessageCircle className="w-4 h-4 mr-2" />
+                          Message Recipient
+                        </Button>
+                      )}
+
 
                       {/* VIEW REQUEST */}
 

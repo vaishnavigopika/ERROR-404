@@ -79,7 +79,6 @@ Navigate to `http://localhost:3000`
     /donations - Donation history
     /profile - User profile
     /messages - Messaging system
-    /stats - User statistics
     /settings - User preferences
   /admin
     /page.tsx - Admin dashboard

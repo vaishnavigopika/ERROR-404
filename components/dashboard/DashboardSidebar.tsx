@@ -8,7 +8,6 @@ import {
   Heart,
   Users,
   Settings,
-  BarChart3,
   MessageSquare,
   Droplet,
   PlusCircle,
@@ -45,11 +44,6 @@ const navigationItems = [
     title: 'Profile',
     href: '/dashboard/profile',
     icon: Users,
-  },
-  {
-    title: 'Statistics',
-    href: '/dashboard/stats',
-    icon: BarChart3,
   },
   {
     title: 'Settings',

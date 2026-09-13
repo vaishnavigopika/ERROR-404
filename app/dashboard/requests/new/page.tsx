@@ -21,6 +21,11 @@ function getTodayDate(): string {
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 }
 
+function getCurrentTime(): string {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+}
+
 export default function NewRequestPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -35,11 +40,23 @@ export default function NewRequestPage() {
     urgency: 'medium' as 'low' | 'medium' | 'high' | 'critical',
     reason: '',
     requiredDate: getTodayDate(),
-    requiredTimeStart: '09:00',
-    requiredTimeEnd: '12:00',
+    requiredTimeStart: '',
+    requiredTimeEnd: '',
   });
 
   const minDate = getTodayDate();
+
+  const isTodaySelected =
+    formData.requiredDate === minDate;
+
+  const currentTime = getCurrentTime();
+
+  const minStartTime =
+    isTodaySelected ? currentTime : undefined;
+
+  const minEndTime =
+    formData.requiredTimeStart ||
+    (isTodaySelected ? currentTime : undefined);
 
   useEffect(() => {
     const checkUserProfile = async () => {
@@ -85,8 +102,25 @@ export default function NewRequestPage() {
 
   const isValidQuantity = Number(formData.quantity) >= 1 && Number(formData.quantity) <= 10;
   const isValidReason = formData.reason.trim().length >= 10;
-  const isValidDate = Boolean(formData.requiredDate) && formData.requiredDate >= minDate;
-  const isValidTimeWindow = formData.requiredTimeStart < formData.requiredTimeEnd;
+  const isValidDate =
+    Boolean(formData.requiredDate) &&
+    formData.requiredDate >= minDate;
+
+  const hasSelectedTimes =
+    Boolean(
+      formData.requiredTimeStart &&
+      formData.requiredTimeEnd
+    );
+
+  const isValidTimeWindow =
+    hasSelectedTimes &&
+    formData.requiredTimeStart <
+      formData.requiredTimeEnd;
+
+  const isValidCurrentTime =
+    !isTodaySelected ||
+    !formData.requiredTimeStart ||
+    formData.requiredTimeStart >= currentTime;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,8 +149,30 @@ export default function NewRequestPage() {
       toast({ title: 'Invalid Date', description: 'Required date cannot be before today.', variant: 'destructive' });
       return;
     }
+    if (!hasSelectedTimes) {
+      toast({
+        title: 'Time Required',
+        description: 'Please select both a start time and an end time.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!isValidCurrentTime) {
+      toast({
+        title: 'Time Has Passed',
+        description: 'Please select a time that has not already passed today.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!isValidTimeWindow) {
-      toast({ title: 'Invalid Time Window', description: 'The required start time must be earlier than the end time.', variant: 'destructive' });
+      toast({
+        title: 'Invalid Time Window',
+        description: 'The required start time must be earlier than the end time.',
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -252,13 +308,33 @@ export default function NewRequestPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="requiredTimeStart">From</Label>
-                  <Input id="requiredTimeStart" name="requiredTimeStart" type="time" value={formData.requiredTimeStart} onChange={handleInputChange} />
+                  <Input
+                    id="requiredTimeStart"
+                    name="requiredTimeStart"
+                    type="time"
+                    min={minStartTime}
+                    value={formData.requiredTimeStart}
+                    onChange={handleInputChange}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="requiredTimeEnd">Until</Label>
-                  <Input id="requiredTimeEnd" name="requiredTimeEnd" type="time" value={formData.requiredTimeEnd} onChange={handleInputChange} />
+                  <Input
+                    id="requiredTimeEnd"
+                    name="requiredTimeEnd"
+                    type="time"
+                    min={minEndTime}
+                    value={formData.requiredTimeEnd}
+                    onChange={handleInputChange}
+                  />
                 </div>
               </div>
+
+              {isTodaySelected && (
+                <p className="text-xs text-muted-foreground">
+                  Since you selected today, time that have already passed cannot be selected.
+                </p>
+              )}
             </div>
 
             <Button type="submit" className="w-full" disabled={loading}>
