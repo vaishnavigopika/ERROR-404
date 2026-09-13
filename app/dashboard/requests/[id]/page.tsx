@@ -491,8 +491,6 @@ export default function RequestDetailsPage() {
       });
       return;
     }
-      return;
-    }
 
     setSchedulingId(donation.id);
     try {
