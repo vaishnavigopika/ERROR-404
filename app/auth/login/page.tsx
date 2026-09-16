@@ -83,9 +83,53 @@ export default function LoginPage() {
         'Your account does not have a valid role. Please contact the administrator.'
       );
     } catch (error: any) {
+      console.error('Login error:', error);
+
+      let message = 'Unable to sign in. Please try again.';
+
+      switch (error?.code) {
+        case 'auth/invalid-credential':
+        case 'auth/wrong-password':
+        case 'auth/user-not-found':
+          message =
+            'Incorrect email or password. Please check your credentials and try again.';
+          break;
+
+        case 'auth/invalid-email':
+          message = 'Please enter a valid email address.';
+          break;
+
+        case 'auth/user-disabled':
+          message =
+            'This account has been disabled. Please contact support.';
+          break;
+
+        case 'auth/too-many-requests':
+          message =
+            'Too many failed login attempts. Please wait a while and try again.';
+          break;
+
+        case 'auth/network-request-failed':
+          message =
+            'Network error. Please check your internet connection.';
+          break;
+
+        case 'auth/operation-not-allowed':
+          message =
+            'Email/password login is not enabled. Please contact support.';
+          break;
+
+        default:
+          // Handle errors we manually created above
+          if (error?.message) {
+            message = error.message;
+          }
+          break;
+      }
+
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to login',
+        title: 'Login Failed',
+        description: message,
         variant: 'destructive',
       });
     } finally {
@@ -160,7 +204,7 @@ export default function LoginPage() {
                   <Input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="••••••••"
+                    placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
