@@ -1325,7 +1325,7 @@ export default function RequestsPage() {
               {matchedCount !== 1
                 ? 's'
                 : ''}{' '}
-              already matched.
+              have offered to donate.
             </div>
           )}
 

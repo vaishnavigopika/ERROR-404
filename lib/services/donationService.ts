@@ -1,7 +1,9 @@
+import { addMonths } from 'date-fns';
 import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -19,7 +21,6 @@ import {
 } from '@/lib/bloodCompatibility';
 
 import {
-  updateUserAfterDonation,
   isUserEligibleToDonate,
 } from '@/lib/services/userService';
 
@@ -47,490 +48,165 @@ function isValidBloodType(
 export async function offerBloodDonation(
   input: OfferBloodDonationInput
 ) {
-  const {
-    donorId,
-    requestId,
-    units,
-    date,
-    bloodType,
-  } = input;
+  const { donorId, requestId, units, date, bloodType } = input;
 
-  if (!donorId) {
-    throw new Error(
-      'Donor ID is required.'
-    );
+  if (!donorId) throw new Error('Donor ID is required.');
+  if (!requestId) throw new Error('Request ID is required.');
+  if (units !== 1) throw new Error('A donor can offer only 1 unit per donation.');
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    throw new Error('Invalid offer date.');
   }
 
-  if (!requestId) {
-    throw new Error(
-      'Request ID is required.'
-    );
-  }
-
-  if (units !== 1) {
-    throw new Error(
-      'A donor can offer only 1 unit per donation.'
-    );
-  }
-
-  if (
-    !(date instanceof Date) ||
-    isNaN(date.getTime())
-  ) {
-    throw new Error(
-      'Invalid donation date.'
-    );
-  }
-
-
-  // ----------------------------------------------------------
-  // CHECK DONOR ELIGIBILITY
-  // ----------------------------------------------------------
-
-  const eligible =
-    await isUserEligibleToDonate(
-      donorId
-    );
-
+  const eligible = await isUserEligibleToDonate(donorId);
   if (!eligible) {
-    throw new Error(
-      'You are currently unavailable for blood donation.'
-    );
+    throw new Error('You are currently unavailable for blood donation.');
   }
 
-
-  // ----------------------------------------------------------
-  // GET DONOR PROFILE
-  // ----------------------------------------------------------
-
-  const donorRef =
-    doc(
-      db,
-      'users',
-      donorId
-    );
-
-  const donorSnap =
-    await getDoc(
-      donorRef
-    );
-
-  if (!donorSnap.exists()) {
-    throw new Error(
-      'Donor profile not found.'
-    );
-  }
-
-  const donorData =
-    donorSnap.data();
-
-
-  if (
-    donorData.role !==
-    'donor'
-  ) {
-    throw new Error(
-      'Only registered donors can offer blood.'
-    );
-  }
-
-
-  const donorBloodType =
-    bloodType ||
-    donorData.bloodType;
-
-
-  if (
-    !donorBloodType ||
-    !isValidBloodType(
-      donorBloodType
-    )
-  ) {
-    throw new Error(
-      'Donor has an invalid or missing blood type.'
-    );
-  }
-
-
-  // ----------------------------------------------------------
-  // CREATE DONATION DOCUMENT REFERENCE
-  // ----------------------------------------------------------
-
-  const donationRef =
-    doc(
-      collection(
-        db,
-        'donations'
-      )
-    );
-
-
-  // ----------------------------------------------------------
-  // TRANSACTION
-  // ----------------------------------------------------------
-
-  const result =
-    await runTransaction(
-      db,
-      async (transaction) => {
-
-        // ====================================================
-        // READ DONOR
-        // ====================================================
-
-        const donorTransactionSnap =
-          await transaction.get(
-            donorRef
-          );
-
-        if (
-          !donorTransactionSnap.exists()
-        ) {
-          throw new Error(
-            'Donor profile not found.'
-          );
-        }
-
-
-        const currentDonorData =
-          donorTransactionSnap.data();
-
-
-        // ====================================================
-        // ACTIVE DONATION LOCK
-        // ====================================================
-
-        if (
-          currentDonorData.activeDonationId
-        ) {
-          throw new Error(
-            'You already have an active blood donation. Complete or cancel it before offering blood to another request.'
-          );
-        }
-
-
-        // ====================================================
-        // READ REQUEST
-        // ====================================================
-
-        const requestRef =
-          doc(
-            db,
-            'bloodRequests',
-            requestId
-          );
-
-
-        const requestSnap =
-          await transaction.get(
-            requestRef
-          );
-
-
-        if (
-          !requestSnap.exists()
-        ) {
-          throw new Error(
-            'Blood request not found.'
-          );
-        }
-
-
-        const requestData =
-          requestSnap.data();
-
-
-        // ====================================================
-        // REQUEST STATUS
-        // ====================================================
-
-        if (
-          requestData.status !==
-          'open'
-        ) {
-          throw new Error(
-            'This blood request is no longer open.'
-          );
-        }
-
-        // Do not allow offers after the requested date or time window.
-        // Offers may be made before the requested window starts; the window
-        // describes when the actual donation should take place.
-        if (requestData.requiredDate) {
-          const now = new Date();
-          const todayString =
-            `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
-              now.getDate()
-            ).padStart(2, '0')}`;
-          const requiredDate = String(requestData.requiredDate);
-
-          if (requiredDate < todayString) {
-            throw new Error(
-              'This blood request has expired because its required date has passed.'
-            );
-          }
-
-          if (
-            requiredDate === todayString &&
-            requestData.requiredTimeEnd
-          ) {
-            const currentTime =
-              `${String(now.getHours()).padStart(2, '0')}:${String(
-                now.getMinutes()
-              ).padStart(2, '0')}`;
-
-            if (currentTime > String(requestData.requiredTimeEnd)) {
-              throw new Error(
-                `This blood request has expired because its requested time window ended at ${requestData.requiredTimeEnd}.`
-              );
-            }
-          }
-        }
-
-
-        // ====================================================
-        // PREVENT SELF-DONATION
-        // ====================================================
-
-        if (
-          requestData.recipientId ===
-          donorId
-        ) {
-          throw new Error(
-            'You cannot donate to your own blood request.'
-          );
-        }
-
-
-        // ====================================================
-        // REQUEST BLOOD TYPE
-        // ====================================================
-
-        const requestBloodType =
-          requestData.bloodType;
-
-
-        if (
-          !requestBloodType ||
-          !isValidBloodType(
-            requestBloodType
-          )
-        ) {
-          throw new Error(
-            'Blood request has an invalid blood type.'
-          );
-        }
-
-
-        // ====================================================
-        // COMPATIBILITY
-        // ====================================================
-
-        if (
-          !canDonate(
-            donorBloodType,
-            requestBloodType
-          )
-        ) {
-          throw new Error(
-            `Your blood type (${donorBloodType}) is not compatible with this request (${requestBloodType}).`
-          );
-        }
-
-
-        // ====================================================
-        // CURRENT REQUEST QUANTITY
-        // ====================================================
-
-        const currentUnits =
-          typeof requestData.quantity ===
-          'number'
-            ? requestData.quantity
-            : typeof requestData.unitsNeeded ===
-              'number'
-              ? requestData.unitsNeeded
-              : 0;
-
-
-        if (
-          currentUnits <= 0
-        ) {
-          throw new Error(
-            'This blood request has already received enough blood.'
-          );
-        }
-
-
-        // ====================================================
-        // MATCHED DONORS
-        // ====================================================
-
-        const existingMatchedDonors =
-          Array.isArray(
-            requestData.matchedDonors
-          )
-            ? requestData.matchedDonors
-            : [];
-
-
-        // Prevent the same donor from being added twice.
-        const matchedDonors =
-          existingMatchedDonors.includes(
-            donorId
-          )
-            ? existingMatchedDonors
-            : [
-                ...existingMatchedDonors,
-                donorId,
-              ];
-
-
-        // ====================================================
-        // NEW REQUEST VALUES
-        // ====================================================
-
-        const newUnits =
-          currentUnits - 1;
-
-
-        const newStatus =
-          newUnits <= 0
-            ? 'matched'
-            : 'open';
-
-
-        const now =
-          new Date().toISOString();
-
-
-        // ====================================================
-        // DONATION RECORD
-        // ====================================================
-
-        const donationData = {
-
-          donorId,
-
-          requestId,
-
-          recipientId:
-            requestData.recipientId,
-
-          bloodType:
-            donorBloodType,
-
-          units:
-            1,
-
-          quantity:
-            1,
-
-          status:
-            'offered',
-
-          offeredAt:
-            now,
-
-          // The date supplied when the donor makes the offer is
-          // only the offer timestamp and must NOT be treated as the
-          // actual donation appointment. The recipient schedules it.
-          donationDate:
-            null,
-
-          createdAt:
-            now,
-
-          updatedAt:
-            now,
-        };
-
-
-        // ====================================================
-        // CREATE DONATION
-        // ====================================================
-
-        transaction.set(
-          donationRef,
-          donationData
-        );
-
-
-        // ====================================================
-        // UPDATE BLOOD REQUEST
-        // ====================================================
-
-        transaction.update(
-          requestRef,
-          {
-
-            quantity:
-              newUnits,
-
-            status:
-              newStatus,
-
-            matchedDonors,
-
-            updatedAt:
-              now,
-
-          }
-        );
-
-
-        // ====================================================
-        // LOCK DONOR
-        // ====================================================
-
-        transaction.update(
-          donorRef,
-          {
-
-            activeDonationId:
-              donationRef.id,
-
-            updatedAt:
-              now,
-
-          }
-        );
-
-
-        return {
-
-          donationId:
-            donationRef.id,
-
-          remainingUnits:
-            newUnits,
-
-          status:
-            newStatus,
-
-          matchedDonors,
-
-        };
+  const donorRef = doc(db, 'users', donorId);
+  const requestRef = doc(db, 'bloodRequests', requestId);
+  const donationRef = doc(collection(db, 'donations'));
+
+  const result = await runTransaction(db, async (transaction) => {
+    const donorSnap = await transaction.get(donorRef);
+    const requestSnap = await transaction.get(requestRef);
+
+    if (!donorSnap.exists()) throw new Error('Donor profile not found.');
+    if (!requestSnap.exists()) throw new Error('Blood request not found.');
+
+    const donorData = donorSnap.data();
+    const requestData = requestSnap.data();
+
+    if (donorData.role !== 'donor') {
+      throw new Error('Only registered donors can offer blood.');
+    }
+
+    if (donorData.activeDonationId) {
+      throw new Error(
+        'You already have an active blood donation. Complete or cancel it before offering blood to another request.'
+      );
+    }
+
+    if (requestData.status !== 'open') {
+      throw new Error('This blood request is no longer open.');
+    }
+
+    // An offer is allowed before the requested donation window.
+    // It is rejected only after the window has completely passed.
+    if (requestData.requiredDate) {
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const requiredDate = String(requestData.requiredDate);
+
+      if (requiredDate < today) {
+        throw new Error('This blood request has expired because its required date has passed.');
       }
-    );
 
+      if (requiredDate === today && requestData.requiredTimeEnd) {
+        const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        if (currentTime > String(requestData.requiredTimeEnd)) {
+          throw new Error(
+            `This blood request has expired because its requested time window ended at ${requestData.requiredTimeEnd}.`
+          );
+        }
+      }
+    }
+
+    if (requestData.recipientId === donorId) {
+      throw new Error('You cannot donate to your own blood request.');
+    }
+
+    const donorBloodType = bloodType || donorData.bloodType;
+    const requestBloodType = requestData.bloodType;
+
+    if (!donorBloodType || !isValidBloodType(donorBloodType)) {
+      throw new Error('Donor has an invalid or missing blood type.');
+    }
+
+    if (!requestBloodType || !isValidBloodType(requestBloodType)) {
+      throw new Error('Blood request has an invalid blood type.');
+    }
+
+    if (!canDonate(donorBloodType, requestBloodType)) {
+      throw new Error(
+        `Your blood type (${donorBloodType}) is not compatible with this request (${requestBloodType}).`
+      );
+    }
+
+    const currentUnits =
+      typeof requestData.quantity === 'number'
+        ? requestData.quantity
+        : typeof requestData.unitsNeeded === 'number'
+          ? requestData.unitsNeeded
+          : 0;
+
+    if (currentUnits <= 0) {
+      throw new Error('This blood request has already received enough blood.');
+    }
+
+    // Count ACTIVE OFFERS separately from units actually received.
+    // IMPORTANT: offering blood does NOT reduce request.quantity.
+    const donationQuery = query(
+      collection(db, 'donations'),
+      where('requestId', '==', requestId),
+      where('status', 'in', ['offered', 'scheduled'])
+    );
+    const activeOffersSnap = await getDocs(donationQuery);
+
+    const duplicateOffer = activeOffersSnap.docs.some(
+      (d) => d.data().donorId === donorId
+    );
+    if (duplicateOffer) {
+      throw new Error('You have already offered blood for this request.');
+    }
+
+    const now = new Date().toISOString();
+
+    const donationData = {
+      donorId,
+      requestId,
+      recipientId: requestData.recipientId,
+      bloodType: donorBloodType,
+      units: 1,
+      quantity: 1,
+      status: 'offered',
+      offeredAt: now,
+      donationDate: null,
+      requiredDate: requestData.requiredDate || null,
+      requiredTimeStart: requestData.requiredTimeStart || null,
+      requiredTimeEnd: requestData.requiredTimeEnd || null,
+      location: requestData.location || null,
+      unitsCounted: false,
+      pendingConfirmation: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    transaction.set(donationRef, donationData);
+
+    // Lock donor until they cancel or confirm what happened.
+    // Do NOT change the blood request quantity here.
+    transaction.update(donorRef, {
+      activeDonationId: donationRef.id,
+      isAvailable: false,
+      bloodStatus: 'Unavailable',
+      pendingDonationConfirmation: true,
+      updatedAt: now,
+    });
+
+    return {
+      donationId: donationRef.id,
+      remainingUnits: currentUnits,
+      status: 'offered' as const,
+    };
+  });
 
   return {
-
-    success:
-      true,
-
-    donationId:
-      result.donationId,
-
-    remainingUnits:
-      result.remainingUnits,
-
-    status:
-      result.status,
-
+    success: true,
+    donationId: result.donationId,
+    remainingUnits: result.remainingUnits,
+    status: result.status,
   };
 }
-
 
 // ============================================================
 // SCHEDULE DONATION
@@ -730,155 +406,131 @@ export async function completeDonation(
   donationId: string,
   completionDate: Date = new Date()
 ) {
-
-  if (!donationId) {
-    throw new Error(
-      'Donation ID is required.'
-    );
+  if (!donationId) throw new Error('Donation ID is required.');
+  if (!(completionDate instanceof Date) || Number.isNaN(completionDate.getTime())) {
+    throw new Error('Invalid completion date.');
   }
 
+  const donationRef = doc(db, 'donations', donationId);
 
-  if (
-    !(completionDate instanceof Date) ||
-    isNaN(
-      completionDate.getTime()
-    )
-  ) {
-    throw new Error(
-      'Invalid completion date.'
-    );
-  }
+  await runTransaction(db, async (transaction) => {
+    const donationSnap = await transaction.get(donationRef);
+    if (!donationSnap.exists()) throw new Error('Donation record not found.');
 
-
-  const donationRef =
-    doc(
-      db,
-      'donations',
-      donationId
-    );
-
-
-  const donationSnap =
-    await getDoc(
-      donationRef
-    );
-
-
-  if (
-    !donationSnap.exists()
-  ) {
-    throw new Error(
-      'Donation record not found.'
-    );
-  }
-
-
-  const donationData =
-    donationSnap.data();
-
-
-  if (
-    donationData.status !==
-    'scheduled'
-  ) {
-    throw new Error(
-      'Only scheduled donations can be completed.'
-    );
-  }
-
-
-  const donorId =
-    donationData.donorId;
-
-
-  if (!donorId) {
-    throw new Error(
-      'Donation does not have a donor ID.'
-    );
-  }
-
-
-  const now =
-    new Date().toISOString();
-
-
-  await updateDoc(
-    donationRef,
-    {
-
-      status:
-        'completed',
-
-      donationDate:
-        completionDate.toISOString(),
-
-      completedAt:
-        now,
-
-      updatedAt:
-        now,
-
+    const donation = donationSnap.data();
+    if (donation.status !== 'offered' && donation.status !== 'scheduled') {
+      throw new Error('This donation is no longer awaiting confirmation.');
     }
-  );
 
+    const donorId = donation.donorId as string | undefined;
+    const requestId = donation.requestId as string | undefined;
+    if (!donorId) throw new Error('Donation does not have a donor ID.');
+    if (!requestId) throw new Error('Donation does not have a request ID.');
 
-  // Update donor's donation history,
-  // availability and next donation date.
-  await updateUserAfterDonation(
-    donorId,
-    completionDate
-  );
+    const donorRef = doc(db, 'users', donorId);
+    const requestRef = doc(db, 'bloodRequests', requestId);
 
+    const donorSnap = await transaction.get(donorRef);
+    const requestSnap = await transaction.get(requestRef);
 
-  // Clear active donation lock.
-  const donorRef =
-    doc(
-      db,
-      'users',
-      donorId
-    );
+    if (!donorSnap.exists()) throw new Error('Donor profile not found.');
+    if (!requestSnap.exists()) throw new Error('Blood request not found.');
 
+    const donorData = donorSnap.data();
+    const requestData = requestSnap.data();
 
-  const donorSnap =
-    await getDoc(
-      donorRef
-    );
+    if (donation.donorId !== donorId) {
+      throw new Error('You are not allowed to confirm this donation.');
+    }
 
+    if (donorData.activeDonationId !== donationId) {
+      throw new Error('This donation is no longer the donor\'s active donation.');
+    }
 
-  if (
-    donorSnap.exists() &&
-    donorSnap.data().activeDonationId ===
-      donationId
-  ) {
+    // The donor can confirm during the requested window OR any time after it.
+    // They cannot confirm before the receiver's requested start time.
+    if (requestData.requiredDate) {
+      const [year, month, day] = String(requestData.requiredDate).split('-').map(Number);
+      if (year && month && day) {
+        const start = new Date(year, month - 1, day);
+        if (requestData.requiredTimeStart) {
+          const [h, m] = String(requestData.requiredTimeStart).split(':').map(Number);
+          start.setHours(h || 0, m || 0, 0, 0);
+        } else {
+          start.setHours(0, 0, 0, 0);
+        }
 
-    await updateDoc(
-      donorRef,
-      {
-
-        activeDonationId:
-          null,
-
-        updatedAt:
-          now,
-
+        if (completionDate.getTime() < start.getTime()) {
+          throw new Error(
+            `Donation confirmation is available from ${requestData.requiredDate}${requestData.requiredTimeStart ? ` at ${requestData.requiredTimeStart}` : ''}.`
+          );
+        }
       }
-    );
-  }
+    }
 
+    const currentQuantity =
+      typeof requestData.quantity === 'number'
+        ? requestData.quantity
+        : typeof requestData.unitsNeeded === 'number'
+          ? requestData.unitsNeeded
+          : 0;
+
+    const alreadyCounted = donation.unitsCounted === true;
+    const newQuantity = alreadyCounted
+      ? currentQuantity
+      : Math.max(0, currentQuantity - 1);
+
+    const existingMatchedDonors = Array.isArray(requestData.matchedDonors)
+      ? requestData.matchedDonors
+      : [];
+
+    const matchedDonors = existingMatchedDonors.includes(donorId)
+      ? existingMatchedDonors
+      : [...existingMatchedDonors, donorId];
+
+    const now = new Date().toISOString();
+
+    transaction.update(donationRef, {
+      status: 'completed',
+      donationDate: completionDate.toISOString(),
+      completedAt: now,
+      unitsCounted: true,
+      pendingConfirmation: false,
+      updatedAt: now,
+    });
+
+    // ONLY NOW does the request lose one unit.
+    transaction.update(requestRef, {
+      quantity: newQuantity,
+      matchedDonors,
+      status: newQuantity <= 0 ? 'matched' : 'open',
+      updatedAt: now,
+    });
+
+    // A real donation starts the 3-month waiting period.
+    const nextAvailableDate = addMonths(completionDate, 3).toISOString();
+
+    transaction.update(donorRef, {
+      activeDonationId: null,
+      isAvailable: false,
+      bloodStatus: 'Unavailable',
+      pendingDonationConfirmation: false,
+      lastDonation: completionDate.toISOString(),
+      totalDonations:
+        typeof donorData.totalDonations === 'number'
+          ? donorData.totalDonations + (alreadyCounted ? 0 : 1)
+          : 1,
+      nextAvailableDate,
+      updatedAt: now,
+    });
+  });
 
   return {
-
-    success:
-      true,
-
+    success: true,
     donationId,
-
-    status:
-      'completed',
-
+    status: 'completed' as const,
   };
 }
-
 
 // ============================================================
 // CANCEL DONATION
@@ -887,292 +539,76 @@ export async function completeDonation(
 export async function cancelDonation(
   donationId: string
 ) {
+  if (!donationId) throw new Error('Donation ID is required.');
 
-  if (!donationId) {
-    throw new Error(
-      'Donation ID is required.'
-    );
-  }
+  const donationRef = doc(db, 'donations', donationId);
 
+  await runTransaction(db, async (transaction) => {
+    const donationSnap = await transaction.get(donationRef);
+    if (!donationSnap.exists()) throw new Error('Donation record not found.');
 
-  const donationRef =
-    doc(
-      db,
-      'donations',
-      donationId
-    );
-
-
-  const donationSnap =
-    await getDoc(
-      donationRef
-    );
-
-
-  if (
-    !donationSnap.exists()
-  ) {
-    throw new Error(
-      'Donation record not found.'
-    );
-  }
-
-
-  const donationData =
-    donationSnap.data();
-
-
-  if (
-    donationData.status !==
-      'offered' &&
-    donationData.status !==
-      'scheduled'
-  ) {
-    throw new Error(
-      'This donation cannot be cancelled.'
-    );
-  }
-
-
-  const donorId =
-    donationData.donorId;
-
-
-  const requestId =
-    donationData.requestId;
-
-
-  if (!donorId) {
-    throw new Error(
-      'Donation does not have a donor ID.'
-    );
-  }
-
-
-  if (!requestId) {
-    throw new Error(
-      'Donation does not have a request ID.'
-    );
-  }
-
-
-  await runTransaction(
-    db,
-    async (
-      transaction
-    ) => {
-
-      // ------------------------------------------------------
-      // READ CURRENT DONATION
-      // ------------------------------------------------------
-
-      const currentDonationSnap =
-        await transaction.get(
-          donationRef
-        );
-
-
-      if (
-        !currentDonationSnap.exists()
-      ) {
-        throw new Error(
-          'Donation record not found.'
-        );
-      }
-
-
-      const currentDonationData =
-        currentDonationSnap.data();
-
-
-      if (
-        currentDonationData.status !==
-          'offered' &&
-        currentDonationData.status !==
-          'scheduled'
-      ) {
-        throw new Error(
-          'This donation can no longer be cancelled.'
-        );
-      }
-
-
-      // ------------------------------------------------------
-      // REFERENCES
-      // ------------------------------------------------------
-
-      const requestRef =
-        doc(
-          db,
-          'bloodRequests',
-          requestId
-        );
-
-
-      const donorRef =
-        doc(
-          db,
-          'users',
-          donorId
-        );
-
-
-      // ------------------------------------------------------
-      // READ REQUEST + DONOR
-      // ------------------------------------------------------
-
-      const requestSnap =
-        await transaction.get(
-          requestRef
-        );
-
-
-      const donorSnap =
-        await transaction.get(
-          donorRef
-        );
-
-
-      const now =
-        new Date().toISOString();
-
-
-      // ------------------------------------------------------
-      // CANCEL DONATION
-      // ------------------------------------------------------
-
-      transaction.update(
-        donationRef,
-        {
-
-          status:
-            'cancelled',
-
-          cancelledAt:
-            now,
-
-          updatedAt:
-            now,
-
-        }
-      );
-
-
-      // ------------------------------------------------------
-      // RESTORE REQUEST UNIT
-      // ------------------------------------------------------
-
-      if (
-        requestSnap.exists()
-      ) {
-
-        const requestData =
-          requestSnap.data();
-
-
-        const currentUnits =
-          typeof requestData.quantity ===
-          'number'
-            ? requestData.quantity
-            : 0;
-
-
-        const restoredUnits =
-          currentUnits + 1;
-
-
-        // Remove this donor from matchedDonors.
-        const existingMatchedDonors =
-          Array.isArray(
-            requestData.matchedDonors
-          )
-            ? requestData.matchedDonors
-            : [];
-
-
-        const updatedMatchedDonors =
-          existingMatchedDonors.filter(
-            (
-              id: string
-            ) =>
-              id !== donorId
-          );
-
-
-        transaction.update(
-          requestRef,
-          {
-
-            quantity:
-              restoredUnits,
-
-            status:
-              'open',
-
-            matchedDonors:
-              updatedMatchedDonors,
-
-            updatedAt:
-              now,
-
-          }
-        );
-      }
-
-
-      // ------------------------------------------------------
-      // CLEAR DONOR LOCK
-      // ------------------------------------------------------
-
-      if (
-        donorSnap.exists() &&
-        donorSnap.data().activeDonationId ===
-          donationId
-      ) {
-
-        transaction.update(
-          donorRef,
-          {
-
-            activeDonationId:
-              null,
-
-            updatedAt:
-              now,
-
-          }
-        );
-      }
-
+    const donation = donationSnap.data();
+    if (donation.status !== 'offered' && donation.status !== 'scheduled') {
+      throw new Error('This donation cannot be cancelled.');
     }
-  );
 
+    const donorId = donation.donorId as string | undefined;
+    const requestId = donation.requestId as string | undefined;
+    if (!donorId) throw new Error('Donation does not have a donor ID.');
+    if (!requestId) throw new Error('Donation does not have a request ID.');
+
+    const donorRef = doc(db, 'users', donorId);
+    const requestRef = doc(db, 'bloodRequests', requestId);
+    const donorSnap = await transaction.get(donorRef);
+    const requestSnap = await transaction.get(requestRef);
+
+    const now = new Date().toISOString();
+
+    transaction.update(donationRef, {
+      status: 'cancelled',
+      cancelledAt: now,
+      pendingConfirmation: false,
+      updatedAt: now,
+    });
+
+    // New offers never reduce quantity, so cancellation must NOT add a unit back.
+    // Remove the donor only if an old/legacy record incorrectly put them in matchedDonors.
+    if (requestSnap.exists()) {
+      const requestData = requestSnap.data();
+      const matchedDonors = Array.isArray(requestData.matchedDonors)
+        ? requestData.matchedDonors.filter((id: string) => id !== donorId)
+        : [];
+
+      transaction.update(requestRef, {
+        matchedDonors,
+        updatedAt: now,
+      });
+    }
+
+    if (
+      donorSnap.exists() &&
+      donorSnap.data().activeDonationId === donationId
+    ) {
+      transaction.update(donorRef, {
+        activeDonationId: null,
+        pendingDonationConfirmation: false,
+        isAvailable: true,
+        bloodStatus: 'Available',
+        updatedAt: now,
+      });
+    }
+  });
 
   return {
-
-    success:
-      true,
-
+    success: true,
     donationId,
-
-    status:
-      'cancelled',
-
+    status: 'cancelled' as const,
   };
 }
-
 
 // ============================================================
 // UPDATE BLOOD REQUEST
 // ============================================================
-
-interface UpdateBloodRequestLocation {
-  facilityName: string;
-  address: string;
-  city: string;
-  state: string;
-  pincode?: string;
-}
 
 interface UpdateBloodRequestInput {
   bloodType?: BloodType;
@@ -1183,7 +619,13 @@ interface UpdateBloodRequestInput {
   requiredDate: string;
   requiredTimeStart?: string;
   requiredTimeEnd?: string;
-  location: UpdateBloodRequestLocation;
+  location: {
+    facilityName: string;
+    address: string;
+    city: string;
+    state: string;
+    pincode?: string;
+  };
 }
 
 export async function updateBloodRequest(
@@ -1207,26 +649,16 @@ export async function updateBloodRequest(
     throw new Error('Reason must contain at least 10 characters.');
   }
 
-  // Hospital / Blood Bank donation location.
-  // Facility name, address, city and state are required.
-  // Pincode is optional.
-  if (!updates.location) {
-    throw new Error('Hospital / Blood Bank donation location is required.');
-  }
-
-  if (!updates.location.facilityName?.trim()) {
+  if (!updates.location?.facilityName?.trim()) {
     throw new Error('Hospital / Blood Bank name is required.');
   }
-
-  if (!updates.location.address?.trim()) {
+  if (!updates.location?.address?.trim()) {
     throw new Error('Hospital / Blood Bank address is required.');
   }
-
-  if (!updates.location.city?.trim()) {
+  if (!updates.location?.city?.trim()) {
     throw new Error('City is required for the donation location.');
   }
-
-  if (!updates.location.state?.trim()) {
+  if (!updates.location?.state?.trim()) {
     throw new Error('State is required for the donation location.');
   }
 
@@ -1282,9 +714,6 @@ export async function updateBloodRequest(
     requiredDate: updates.requiredDate,
     requiredTimeStart: updates.requiredTimeStart || null,
     requiredTimeEnd: updates.requiredTimeEnd || null,
-
-    // Hospital / Blood Bank donation location.
-    // Do not use recipient profile location here.
     location: {
       facilityName: updates.location.facilityName.trim(),
       address: updates.location.address.trim(),
@@ -1292,7 +721,6 @@ export async function updateBloodRequest(
       state: updates.location.state.trim(),
       pincode: updates.location.pincode?.trim() || '',
     },
-
     status: remainingUnits > 0 ? 'open' : 'matched',
     updatedAt: now,
   });

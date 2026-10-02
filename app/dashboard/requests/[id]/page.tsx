@@ -3,10 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-
 import {
   collection,
   doc,
@@ -26,9 +24,6 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-
 import { useToast } from '@/hooks/use-toast';
 
 import {
@@ -37,7 +32,6 @@ import {
   UserProfile,
 } from '@/lib/types';
 
-import { scheduleDonation } from '@/lib/services/donationService';
 import {
   ArrowLeft,
   Calendar,
@@ -48,27 +42,33 @@ import {
   MapPin,
   Phone,
   User,
-  CheckCircle2,
   MessageCircle,
+  CheckCircle2,
 } from 'lucide-react';
 
-interface RequestLocation {
+type LocationData = {
   facilityName?: string;
   address?: string;
   city?: string;
   state?: string;
   pincode?: string;
-}
+};
 
-interface RequestExtras {
+type RequestWithExtras = BloodRequest & {
   unitsReceivedOutside?: number;
   requiredTimeStart?: string;
   requiredTimeEnd?: string;
-  contactPhone?: string;
-  location?: RequestLocation;
-}
 
-type RequestWithExtras = BloodRequest & RequestExtras;
+  // Hospital / Blood Bank location
+  location?: LocationData | string | null;
+
+  contactPhone?: string;
+};
+
+type DonationWithExtras = DonationRecord & {
+  pendingConfirmation?: boolean;
+  unitsCounted?: boolean;
+};
 
 function toDate(value: any): Date | null {
   if (!value) return null;
@@ -102,7 +102,7 @@ function formatDate(value: any) {
 }
 
 function formatTime(value?: string) {
-  if (!value) return '';
+  if (!value) return 'Not specified';
 
   const [h, m] = value.split(':').map(Number);
 
@@ -120,11 +120,37 @@ function formatTime(value?: string) {
   });
 }
 
+function formatLocation(
+  location: LocationData | string | null | undefined
+) {
+  if (!location) {
+    return 'Hospital / Blood Bank location not provided';
+  }
+
+  if (typeof location === 'string') {
+    return location;
+  }
+
+  const parts = [
+    location.facilityName,
+    location.address,
+    location.city,
+    location.state,
+    location.pincode,
+  ].filter(Boolean);
+
+  return parts.length
+    ? parts.join(', ')
+    : 'Hospital / Blood Bank location not provided';
+}
+
 export default function RequestDetailsPage() {
   const params = useParams<{ id: string }>();
 
   const requestId = params?.id;
+
   const router = useRouter();
+
   const { user } = useAuth();
 
   const { toast } = useToast();
@@ -133,31 +159,19 @@ export default function RequestDetailsPage() {
     useState<RequestWithExtras | null>(null);
 
   const [recipient, setRecipient] =
-    useState<UserProfile & Record<string, any> | null>(null);
+    useState<(UserProfile & Record<string, any>) | null>(null);
 
-  const [donations, setDonations] = useState<
-    (DonationRecord & Record<string, any>)[]
-  >([]);
+  const [donations, setDonations] =
+    useState<DonationWithExtras[]>([]);
 
   const [donorNames, setDonorNames] =
     useState<Record<string, string>>({});
 
   const [loading, setLoading] = useState(true);
 
-  const [schedulingId, setSchedulingId] =
-    useState<string | null>(null);
-
-  const [scheduleTimes, setScheduleTimes] =
-    useState<Record<string, string>>({});
-
   useEffect(() => {
-    let active = true;
-
     const load = async () => {
-      if (!requestId) {
-        if (active) setLoading(false);
-        return;
-      }
+      if (!requestId) return;
 
       try {
         // --------------------------------------------------
@@ -177,11 +191,10 @@ export default function RequestDetailsPage() {
           ...requestSnap.data(),
         } as RequestWithExtras;
 
-        if (!active) return;
         setRequest(data);
 
         // --------------------------------------------------
-        // LOAD RECIPIENT CONTACT
+        // LOAD RECIPIENT
         // --------------------------------------------------
 
         if (data.recipientId) {
@@ -189,7 +202,7 @@ export default function RequestDetailsPage() {
             doc(db, 'users', data.recipientId)
           );
 
-          if (active && recipientSnap.exists()) {
+          if (recipientSnap.exists()) {
             setRecipient(
               recipientSnap.data() as UserProfile &
                 Record<string, any>
@@ -198,7 +211,7 @@ export default function RequestDetailsPage() {
         }
 
         // --------------------------------------------------
-        // LOAD DONATIONS
+        // LOAD DONATIONS / OFFERS
         // --------------------------------------------------
 
         const donationSnap = await getDocs(
@@ -211,7 +224,7 @@ export default function RequestDetailsPage() {
         const records = donationSnap.docs.map((d) => ({
           id: d.id,
           ...d.data(),
-        })) as (DonationRecord & Record<string, any>)[];
+        })) as DonationWithExtras[];
 
         records.sort(
           (a, b) =>
@@ -219,7 +232,6 @@ export default function RequestDetailsPage() {
             (toDate(a.createdAt)?.getTime() ?? 0)
         );
 
-        if (!active) return;
         setDonations(records);
 
         // --------------------------------------------------
@@ -231,47 +243,46 @@ export default function RequestDetailsPage() {
         for (const donation of records) {
           if (!donation.donorId) continue;
 
-          const snap = await getDoc(
-            doc(db, 'users', donation.donorId)
-          );
+          try {
+            const snap = await getDoc(
+              doc(db, 'users', donation.donorId)
+            );
 
-          if (snap.exists()) {
+            if (snap.exists()) {
+              names[donation.donorId] =
+                (snap.data() as any).name ||
+                'BloodConnect Donor';
+            }
+          } catch {
             names[donation.donorId] =
-              (snap.data() as any).name ||
               'BloodConnect Donor';
           }
         }
 
-        if (active) setDonorNames(names);
+        setDonorNames(names);
       } catch (error: any) {
         console.error(
           'Failed to load request details:',
           error
         );
 
-        if (active) {
-          toast({
-            title: 'Unable to Load Request',
-            description:
-              error?.message ||
-              'Could not load request details.',
-            variant: 'destructive',
-          });
-        }
+        toast({
+          title: 'Unable to Load Request',
+          description:
+            error?.message ||
+            'Could not load request details.',
+          variant: 'destructive',
+        });
       } finally {
-        if (active) setLoading(false);
+        setLoading(false);
       }
     };
 
     load();
-
-    return () => {
-      active = false;
-    };
   }, [requestId, toast]);
 
   // --------------------------------------------------
-  // REQUEST INFORMATION
+  // OWNER
   // --------------------------------------------------
 
   const isOwner = Boolean(
@@ -279,230 +290,128 @@ export default function RequestDetailsPage() {
       request?.recipientId === user.uid
   );
 
-  const bloodConnectReceived =
-    request?.matchedDonors?.length ?? 0;
+  // --------------------------------------------------
+  // ACTIVE OFFERS
+  //
+  // These do NOT reduce units needed.
+  // --------------------------------------------------
 
-  const outsideReceived =
-    request?.unitsReceivedOutside ?? 0;
-
-  const totalRequested =
-    request?.unitsNeeded ??
-    request?.quantity ??
-    0;
-
-  const remaining = Math.max(
-    0,
-    totalRequested - bloodConnectReceived - outsideReceived
-  );
-
-  const offeredDonations = useMemo(
+  const activeOffers = useMemo(
     () =>
       donations.filter(
-        (d) => d.status === 'offered'
+        (d) =>
+          d.status === 'offered' ||
+          d.status === 'scheduled'
       ),
     [donations]
   );
 
   // --------------------------------------------------
-  // HOSPITAL / BLOOD BANK LOCATION
+  // COMPLETED DONATIONS
+  //
+  // Only these reduce the required units.
   // --------------------------------------------------
 
-  const facilityName =
-    request?.location?.facilityName ||
-    'Hospital / Blood Bank';
-
-  const facilityAddress = [
-    request?.location?.address,
-    request?.location?.city,
-    request?.location?.state,
-    request?.location?.pincode,
-  ]
-    .filter(
-      (value): value is string =>
-        typeof value === 'string' &&
-        value.trim().length > 0
-    )
-    .join(', ');
+  const completedDonations = useMemo(
+    () =>
+      donations.filter(
+        (d) => d.status === 'completed'
+      ),
+    [donations]
+  );
 
   // --------------------------------------------------
-  // DONATION SCHEDULING
+  // ORIGINAL REQUESTED UNITS
+  //
+  // IMPORTANT:
+  // ALWAYS use unitsNeeded first.
+  //
+  // Do NOT use request.quantity here because older
+  // logic may have changed quantity when an offer
+  // was created.
   // --------------------------------------------------
 
-  const openDonationChat = (
-    donation: DonationRecord & Record<string, any>
-  ) => {
-    if (!user || !request || request.recipientId !== user.uid) return;
+  const totalRequested =
+    Number(request?.unitsNeeded ?? 0);
 
-    if (!donation.donorId) {
-      toast({
-        title: 'Messaging Unavailable',
-        description: 'This donor does not have a valid donor ID.',
-        variant: 'destructive',
-      });
-      return;
-    }
+  // Fallback only for very old records that do not
+  // contain unitsNeeded.
+  const originalRequested =
+    totalRequested > 0
+      ? totalRequested
+      : Number(request?.quantity ?? 0);
 
-    if (donation.status === 'cancelled') {
-      toast({
-        title: 'Messaging Unavailable',
-        description: 'This donation offer has been cancelled.',
-        variant: 'destructive',
-      });
-      return;
-    }
+  // --------------------------------------------------
+  // BLOOD RECEIVED OUTSIDE BLOODCONNECT
+  // --------------------------------------------------
 
-    router.push(
-      `/dashboard/messages?donationId=${encodeURIComponent(donation.id)}`
-    );
-  };
+  const outsideReceived = Math.max(
+    0,
+    Number(request?.unitsReceivedOutside ?? 0)
+  );
 
-  const handleSchedule = async (
-    donation: DonationRecord & Record<string, any>
-  ) => {
-    if (!user || !request || !isOwner) return;
-    const time = scheduleTimes[donation.id];
-    if (!request.requiredDate || !time) {
-      toast({
-        title: 'Schedule Required',
-        description: 'Select the donation time before scheduling.',
-        variant: 'destructive',
-      });
-      return;
-    }
+  // --------------------------------------------------
+  // COMPLETED BLOODCONNECT DONATIONS
+  //
+  // Only completed donations are counted.
+  // Offered/scheduled/cancelled donations are ignored.
+  // --------------------------------------------------
 
-    if (!donation.donorId) {
-      toast({
-        title: 'Messaging Unavailable',
-        description: 'This donor does not have a valid donor ID.',
-        variant: 'destructive',
-      });
-
-      return;
-    }
-
-    if (donation.status === 'cancelled') {
-      toast({
-        title: 'Messaging Unavailable',
-        description: 'This donation offer has been cancelled.',
-        variant: 'destructive',
-      });
-
-      return;
-    }
-
-    // --------------------------------------------------
-    // BUILD APPOINTMENT DATE
-    // --------------------------------------------------
-
-    const [year, month, day] =
-      request.requiredDate.split('-').map(Number);
-
-    const [hours, minutes] = time.split(':').map(Number);
-
-    const scheduledDate = new Date(
-      year,
-      month - 1,
-      day,
-      hours,
-      minutes,
-      0,
+  const receivedThroughBloodConnect =
+    completedDonations.reduce(
+      (sum, donation) =>
+        sum +
+        Number(
+          donation.units ??
+            donation.quantity ??
+            1
+        ),
       0
     );
 
+  // --------------------------------------------------
+  // STILL NEEDED
+  //
+  // IMPORTANT:
+  //
+  // original requested
+  //       -
+  // completed BloodConnect donations
+  //       -
+  // blood received elsewhere
+  //
+  // ACTIVE OFFERS ARE NOT SUBTRACTED.
+  // --------------------------------------------------
+
+  const remaining = Math.max(
+    0,
+    originalRequested -
+      receivedThroughBloodConnect -
+      outsideReceived
+  );
+
+  // --------------------------------------------------
+  // OPEN MESSAGE CHAT
+  // --------------------------------------------------
+
+  const openDonationChat = (
+    donation: DonationRecord
+  ) => {
     if (
-      !Number.isFinite(year) ||
-      !Number.isFinite(month) ||
-      !Number.isFinite(day) ||
-      !Number.isFinite(hours) ||
-      !Number.isFinite(minutes) ||
-      Number.isNaN(scheduledDate.getTime())
+      !user ||
+      !request ||
+      request.recipientId !== user.uid
     ) {
-      toast({
-        title: 'Invalid Appointment',
-        description: 'Please choose a valid donation time.',
-        variant: 'destructive',
-      });
       return;
     }
 
-    // --------------------------------------------------
-    // CHECK DATE NORMALIZATION
-    // --------------------------------------------------
+    if (!donation.donorId) return;
 
-    if (
-      scheduledDate.getFullYear() !== year ||
-      scheduledDate.getMonth() !== month - 1 ||
-      scheduledDate.getDate() !== day ||
-      scheduledDate.getHours() !== hours ||
-      scheduledDate.getMinutes() !== minutes
-    ) {
-      toast({
-        title: 'Invalid Appointment',
-        description: 'The selected donation date or time is invalid.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    // --------------------------------------------------
-    // CHECK REQUIRED TIME WINDOW
-    // --------------------------------------------------
-
-    if (
-      request.requiredTimeStart &&
-      time < request.requiredTimeStart
-    ) {
-      toast({
-        title: 'Outside Required Window',
-        description:
-          `Choose a time at or after ${formatTime(
-            request.requiredTimeStart
-          )}.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (
-      request.requiredTimeEnd &&
-      time > request.requiredTimeEnd
-    ) {
-      toast({
-        title: 'Outside Required Window',
-        description:
-          `Choose a time at or before ${formatTime(
-            request.requiredTimeEnd
-          )}.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    // --------------------------------------------------
-    // CHECK PAST TIME
-    // --------------------------------------------------
-
-    if (scheduledDate.getTime() < Date.now()) {
-      toast({
-        title: 'Time Has Passed',
-        description:
-          'A donation appointment cannot be scheduled in the past.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setSchedulingId(donation.id);
-    try {
-      await scheduleDonation(donation.id, scheduledDate, user.uid);
-      setDonations((prev) => prev.map((d) => d.id === donation.id ? { ...d, status: 'scheduled', donationDate: scheduledDate.toISOString() } : d));
-      toast({ title: 'Donation Scheduled', description: 'The donor has been given the agreed donation date and time.' });
-    } catch (error: any) {
-      console.error('Schedule failed:', error);
-      toast({ title: 'Scheduling Failed', description: error?.message || 'Could not schedule the donation.', variant: 'destructive' });
-    } finally {
-      setSchedulingId(null);
-    }
+    router.push(
+      `/dashboard/messages?donationId=${encodeURIComponent(
+        donation.id
+      )}`
+    );
   };
 
   // --------------------------------------------------
@@ -513,13 +422,9 @@ export default function RequestDetailsPage() {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center">
-
           <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
 
-          <p>
-            Loading request details...
-          </p>
-
+          <p>Loading request details...</p>
         </div>
       </div>
     );
@@ -532,7 +437,6 @@ export default function RequestDetailsPage() {
   if (!request) {
     return (
       <div className="p-8 text-center">
-
         <p className="mb-4">
           Request not found.
         </p>
@@ -542,13 +446,12 @@ export default function RequestDetailsPage() {
             Back to Requests
           </Link>
         </Button>
-
       </div>
     );
   }
 
   // --------------------------------------------------
-  // RECIPIENT CONTACT
+  // CONTACT INFORMATION
   // --------------------------------------------------
 
   const contactPhone =
@@ -571,16 +474,14 @@ export default function RequestDetailsPage() {
     <div className="p-6 md:p-8 space-y-6 max-w-5xl mx-auto">
 
       {/* HEADER */}
-
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-
         <div>
-
           <Link
             href="/dashboard/requests"
             className="inline-flex items-center gap-2 text-primary hover:underline mb-3"
           >
             <ArrowLeft className="w-4 h-4" />
+
             Back to Requests
           </Link>
 
@@ -589,10 +490,9 @@ export default function RequestDetailsPage() {
           </h1>
 
           <p className="text-muted-foreground mt-1">
-            Connect with the recipient and coordinate
-            the donation safely.
+            Coordinate the donation with the recipient
+            and hospital / blood bank.
           </p>
-
         </div>
 
         {isOwner && (
@@ -601,23 +501,18 @@ export default function RequestDetailsPage() {
               href={`/dashboard/requests/${requestId}/edit`}
             >
               <Edit className="w-4 h-4 mr-2" />
+
               Edit Request
             </Link>
           </Button>
         )}
-
       </div>
 
       {/* REQUEST SUMMARY */}
-
       <Card>
-
         <CardHeader>
-
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-
             <div>
-
               <CardTitle className="flex items-center gap-3">
                 <Droplet className="w-5 h-5 text-primary" />
 
@@ -627,68 +522,54 @@ export default function RequestDetailsPage() {
               <CardDescription className="mt-2">
                 {request.reason}
               </CardDescription>
-
             </div>
 
             <Badge>
               {request.status}
             </Badge>
-
           </div>
-
         </CardHeader>
 
         <CardContent className="space-y-5">
 
-          {/* REQUEST COUNTS */}
-
+          {/* STATISTICS */}
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
+            {/* ORIGINAL REQUEST */}
             <div className="rounded-lg border p-4">
-
               <p className="text-xs text-muted-foreground">
                 Originally requested
               </p>
 
               <p className="text-2xl font-bold">
-                {totalRequested}
+                {originalRequested}
               </p>
-
-              <p className="text-xs">
-                unit
-                {totalRequested !== 1
-                  ? 's'
-                  : ''}
-              </p>
-
             </div>
 
+            {/* COMPLETED */}
             <div className="rounded-lg border p-4">
-
               <p className="text-xs text-muted-foreground">
-                Received through BloodConnect
+                Completed through BloodConnect
               </p>
 
               <p className="text-2xl font-bold">
-                {bloodConnectReceived}
+                {receivedThroughBloodConnect}
               </p>
-
             </div>
 
+            {/* ACTIVE OFFERS */}
             <div className="rounded-lg border p-4">
-
               <p className="text-xs text-muted-foreground">
-                Received elsewhere
+                Active offers
               </p>
 
-              <p className="text-2xl font-bold">
-                {outsideReceived}
+              <p className="text-2xl font-bold text-blue-600">
+                {activeOffers.length}
               </p>
-
             </div>
 
+            {/* STILL NEEDED */}
             <div className="rounded-lg border p-4 bg-primary/5">
-
               <p className="text-xs text-muted-foreground">
                 Still needed
               </p>
@@ -696,36 +577,30 @@ export default function RequestDetailsPage() {
               <p className="text-2xl font-bold text-primary">
                 {remaining}
               </p>
-
             </div>
-
           </div>
 
           {/* DATE / TIME */}
-
           <div className="grid sm:grid-cols-2 gap-4 text-sm">
 
             <div className="flex items-center gap-3">
-
               <Calendar className="w-4 h-4 text-primary" />
 
               <span>
-                Needed on{' '}
+                Donation date:{' '}
                 <strong>
                   {formatDate(
                     request.requiredDate
                   )}
                 </strong>
               </span>
-
             </div>
 
             <div className="flex items-center gap-3">
-
               <Clock className="w-4 h-4 text-primary" />
 
               <span>
-                Preferred time{' '}
+                Donation time:{' '}
                 <strong>
                   {formatTime(
                     request.requiredTimeStart
@@ -736,257 +611,192 @@ export default function RequestDetailsPage() {
                   )}
                 </strong>
               </span>
-
             </div>
 
           </div>
-
         </CardContent>
-
       </Card>
 
-      {/* RECIPIENT CONTACT */}
-
+      {/* HOSPITAL / BLOOD BANK */}
       <Card>
-
         <CardHeader>
-
           <CardTitle className="flex items-center gap-2">
+            <MapPin className="w-5 h-5 text-primary" />
 
-            <User className="w-5 h-5 text-primary" />
-
-            Recipient Contact
-
+            Hospital / Blood Bank
           </CardTitle>
 
           <CardDescription>
-            Use the recipient's contact details to
-            coordinate the donation. The donation
-            location below is the hospital or blood bank
-            specified in this blood request.
+            This is the location where the blood
+            donation is to take place.
           </CardDescription>
-
         </CardHeader>
 
         <CardContent>
-
-          <div className="grid sm:grid-cols-2 gap-4 text-sm">
-
-            {/* Recipient Name */}
-
-            <div className="flex items-center gap-3">
-
-              <User className="w-4 h-4 text-primary" />
-
-              <span>
-                <strong>
-                  {recipient?.name ||
-                    'Recipient'}
-                </strong>
-              </span>
-
-            </div>
-
-            {/* Recipient Phone */}
-
-            <div className="flex items-center gap-3">
-
-              <Phone className="w-4 h-4 text-primary" />
-
-              <span>
-                {contactPhone ||
-                  'Phone not provided'}
-              </span>
-
-            </div>
-
-            {/* Recipient Email */}
-
-            <div className="flex items-center gap-3">
-
-              <Mail className="w-4 h-4 text-primary" />
-
-              <span>
-                {contactEmail}
-              </span>
-
-            </div>
-
-            {/* HOSPITAL / BLOOD BANK */}
-
-            <div className="flex items-start gap-3">
-
-              <MapPin className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
-
-              <div>
-
-                <p className="font-medium">
-                  {facilityName}
-                </p>
-
-                {facilityAddress ? (
-                  <p className="text-muted-foreground mt-1">
-                    {facilityAddress}
-                  </p>
-                ) : (
-                  <p className="text-muted-foreground mt-1">
-                    Location not provided
-                  </p>
-                )}
-
-              </div>
-
-            </div>
-
-          </div>
-
+          <p className="font-medium">
+            {formatLocation(request.location)}
+          </p>
         </CardContent>
-
       </Card>
 
-      {/* DONOR MATCHES */}
-
+      {/* RECIPIENT CONTACT */}
       <Card>
-
         <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <User className="w-5 h-5 text-primary" />
 
-          <CardTitle>
-            Donor Matches ({donations.length})
+            Recipient Contact
           </CardTitle>
 
           <CardDescription>
-            Each donor offer represents one unit.
-            The recipient can schedule an offered
-            donation.
+            Use these details to coordinate the donation.
           </CardDescription>
+        </CardHeader>
 
+        <CardContent>
+          <div className="grid sm:grid-cols-3 gap-4 text-sm">
+
+            <div className="flex items-center gap-3">
+              <User className="w-4 h-4 text-primary" />
+
+              <strong>
+                {recipient?.name || 'Recipient'}
+              </strong>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Phone className="w-4 h-4 text-primary" />
+
+              {contactPhone ||
+                'Phone not provided'}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Mail className="w-4 h-4 text-primary" />
+
+              {contactEmail}
+            </div>
+
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* BLOOD OFFERS */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Blood Offers ({activeOffers.length})
+          </CardTitle>
+
+          <CardDescription>
+            Offers do not reduce the required units.
+            A unit is counted only after the donor
+            confirms that the donation actually happened.
+          </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-4">
 
           {donations.length === 0 ? (
-
             <p className="text-sm text-muted-foreground">
               No donor has offered blood yet.
             </p>
-
           ) : (
-
             donations.map((donation) => (
-
               <div
                 key={donation.id}
-                className="rounded-lg border p-4 space-y-4"
+                className="rounded-lg border p-4 space-y-3"
               >
-
-                {/* DONOR */}
 
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
 
                   <div>
                     <p className="font-semibold">
-                      {donorNames[donation.donorId] ||
-                        'BloodConnect Donor'}
+                      {donorNames[
+                        donation.donorId
+                      ] || 'BloodConnect Donor'}
                     </p>
 
                     <p className="text-sm text-muted-foreground">
-                      1 unit • {donation.status}
+                      {Number(
+                        donation.units ??
+                          donation.quantity ??
+                          1
+                      )}{' '}
+                      unit
+                      {Number(
+                        donation.units ??
+                          donation.quantity ??
+                          1
+                      ) !== 1
+                        ? 's'
+                        : ''}{' '}
+                      • {donation.status}
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">
-                      {donation.status}
-                    </Badge>
-
-                    {isOwner && donation.status !== 'cancelled' && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => openDonationChat(donation)}
-                      >
-                        <MessageCircle className="w-4 h-4 mr-2" />
-                        Message Donor
-                      </Button>
-                    )}
-                  </div>
-
+                  <Badge variant="outline">
+                    {donation.status}
+                  </Badge>
                 </div>
 
+                {/* OFFERED */}
+                {donation.status === 'offered' && (
+                  <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                    Waiting for the donor to confirm
+                    whether the donation happened.
+                  </p>
+                )}
+
                 {/* SCHEDULED */}
-
                 {donation.status === 'scheduled' && (
-                  <div className="text-sm flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                    Donation has been scheduled.
+                    The unit will be counted only
+                    after the donor confirms completion.
+                  </p>
+                )}
+
+                {/* COMPLETED */}
+                {donation.status === 'completed' && (
+                  <p className="text-sm text-green-700 dark:text-green-300 flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4" />
-                    Scheduled for {formatDate(donation.donationDate)} at{' '}
-                    {toDate(donation.donationDate)?.toLocaleTimeString(
-                      'en-IN',
-                      { hour: 'numeric', minute: '2-digit' }
-                    )}
-                  </div>
+
+                    Donation completed and counted.
+                  </p>
                 )}
 
-                {/* SCHEDULE DONOR */}
-
-                {isOwner && donation.status === 'offered' && (
-                  <div className="rounded-lg bg-muted/40 p-4 space-y-4">
-                    <div>
-                      <p className="text-sm font-semibold">
-                        Schedule this donor
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        You choose the appointment. It must be on{' '}
-                        <strong>{formatDate(request.requiredDate)}</strong>
-                        {request.requiredTimeStart && request.requiredTimeEnd
-                          ? ` between ${formatTime(request.requiredTimeStart)} and ${formatTime(request.requiredTimeEnd)}.`
-                          : '.'}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
-                      <div className="space-y-2 flex-1">
-                        <Label htmlFor={`time-${donation.id}`}>
-                          Donation time
-                        </Label>
-                        <Input
-                          id={`time-${donation.id}`}
-                          type="time"
-                          min={request.requiredTimeStart || undefined}
-                          max={request.requiredTimeEnd || undefined}
-                          value={
-                            scheduleTimes[donation.id] ||
-                            request.requiredTimeStart ||
-                            ''
-                          }
-                          onChange={(e) =>
-                            setScheduleTimes((prev) => ({
-                              ...prev,
-                              [donation.id]: e.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-
-                      <Button
-                        type="button"
-                        onClick={() => handleSchedule(donation)}
-                        disabled={schedulingId === donation.id}
-                      >
-                        {schedulingId === donation.id
-                          ? 'Scheduling...'
-                          : 'Schedule Donation'}
-                      </Button>
-                    </div>
-                  </div>
+                {/* CANCELLED */}
+                {donation.status === 'cancelled' && (
+                  <p className="text-sm text-muted-foreground">
+                    This blood offer was cancelled and
+                    is not counted.
+                  </p>
                 )}
+
+                {/* MESSAGE DONOR */}
+                {isOwner &&
+                  donation.status !== 'cancelled' && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        openDonationChat(
+                          donation
+                        )
+                      }
+                    >
+                      <MessageCircle className="w-4 h-4 mr-2" />
+
+                      Message Donor
+                    </Button>
+                  )}
 
               </div>
-
             ))
           )}
 
         </CardContent>
-
       </Card>
 
     </div>

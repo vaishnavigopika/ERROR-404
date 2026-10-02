@@ -59,9 +59,10 @@ export default function AdminUsersPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  /* -------------------------------------------------------
-     API helper
-  ------------------------------------------------------- */
+  /* ============================================================
+     API HELPER
+  ============================================================ */
+
   async function apiRequest(
     url: string,
     options: RequestInit = {}
@@ -84,15 +85,18 @@ export default function AdminUsersPage() {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.message || "Something went wrong.");
+      throw new Error(
+        data.message || "Something went wrong."
+      );
     }
 
     return data;
   }
 
-  /* -------------------------------------------------------
-     Load users
-  ------------------------------------------------------- */
+  /* ============================================================
+     LOAD USERS
+  ============================================================ */
+
   async function loadUsers() {
     if (!user) return;
 
@@ -105,7 +109,9 @@ export default function AdminUsersPage() {
       setUsers(data.users || []);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to load users.");
+      setError(
+        err.message || "Failed to load users."
+      );
     } finally {
       setLoading(false);
     }
@@ -117,9 +123,10 @@ export default function AdminUsersPage() {
     }
   }, [authLoading, user]);
 
-  /* -------------------------------------------------------
-     Filter users
-  ------------------------------------------------------- */
+  /* ============================================================
+     FILTER USERS
+  ============================================================ */
+
   const filteredUsers = useMemo(() => {
     const query = search.toLowerCase().trim();
 
@@ -132,15 +139,49 @@ export default function AdminUsersPage() {
         item.id.toLowerCase().includes(query);
 
       const matchesRole =
-        roleFilter === "all" || item.role === roleFilter;
+        roleFilter === "all" ||
+        item.role === roleFilter;
 
       const matchesBlood =
-        bloodFilter === "all" || item.bloodType === bloodFilter;
+        bloodFilter === "all" ||
+        item.bloodType === bloodFilter;
 
+      /*
+       * STATUS LOGIC
+       *
+       * Disabled:
+       * Firebase account itself is disabled.
+       *
+       * Unavailable:
+       * Account is enabled, but donor is currently
+       * unavailable to donate.
+       *
+       * Active:
+       * Account is enabled and donor is available.
+       *
+       * For recipients/admins, "Active" simply means
+       * their Firebase account is enabled.
+       */
       const matchesStatus =
         statusFilter === "all" ||
-        (statusFilter === "active" && !item.disabled) ||
-        (statusFilter === "disabled" && item.disabled);
+        (
+          statusFilter === "active" &&
+          !item.disabled &&
+          (
+            item.role !== "donor" ||
+            item.isAvailable
+          )
+        ) ||
+        (
+          statusFilter === "unavailable" &&
+          !item.disabled &&
+          item.role === "donor" &&
+          !item.isAvailable
+        ) ||
+        (
+          statusFilter === "disabled" &&
+          item.disabled
+        );
 
       return (
         matchesSearch &&
@@ -149,11 +190,18 @@ export default function AdminUsersPage() {
         matchesStatus
       );
     });
-  }, [users, search, roleFilter, bloodFilter, statusFilter]);
+  }, [
+    users,
+    search,
+    roleFilter,
+    bloodFilter,
+    statusFilter,
+  ]);
 
-  /* -------------------------------------------------------
-     Open Add form
-  ------------------------------------------------------- */
+  /* ============================================================
+     ADD USER
+  ============================================================ */
+
   function openAddForm() {
     setEditingUser(null);
     setForm(emptyForm);
@@ -162,9 +210,10 @@ export default function AdminUsersPage() {
     setShowForm(true);
   }
 
-  /* -------------------------------------------------------
-     Open Edit form
-  ------------------------------------------------------- */
+  /* ============================================================
+     EDIT USER
+  ============================================================ */
+
   function openEditForm(item: AdminUser) {
     setEditingUser(item);
 
@@ -182,9 +231,10 @@ export default function AdminUsersPage() {
     setShowForm(true);
   }
 
-  /* -------------------------------------------------------
-     Close form
-  ------------------------------------------------------- */
+  /* ============================================================
+     CLOSE FORM
+  ============================================================ */
+
   function closeForm() {
     if (saving) return;
 
@@ -193,9 +243,10 @@ export default function AdminUsersPage() {
     setForm(emptyForm);
   }
 
-  /* -------------------------------------------------------
-     Form field update
-  ------------------------------------------------------- */
+  /* ============================================================
+     UPDATE FORM
+  ============================================================ */
+
   function updateForm(
     field: keyof UserForm,
     value: string
@@ -206,10 +257,13 @@ export default function AdminUsersPage() {
     }));
   }
 
-  /* -------------------------------------------------------
-     Add / Edit submit
-  ------------------------------------------------------- */
-  async function handleSubmit(event: React.FormEvent) {
+  /* ============================================================
+     CREATE / UPDATE USER
+  ============================================================ */
+
+  async function handleSubmit(
+    event: React.FormEvent
+  ) {
     event.preventDefault();
 
     setError("");
@@ -225,8 +279,13 @@ export default function AdminUsersPage() {
       return;
     }
 
-    if (!editingUser && form.password.length < 6) {
-      setError("Password must contain at least 6 characters.");
+    if (
+      !editingUser &&
+      form.password.length < 6
+    ) {
+      setError(
+        "Password must contain at least 6 characters."
+      );
       return;
     }
 
@@ -240,14 +299,17 @@ export default function AdminUsersPage() {
             uid: editingUser.id,
             name: form.name,
             email: form.email,
-            password: form.password || undefined,
+            password:
+              form.password || undefined,
             phone: form.phone,
             role: form.role,
             bloodType: form.bloodType,
           }),
         });
 
-        setSuccess("User updated successfully.");
+        setSuccess(
+          "User updated successfully."
+        );
       } else {
         await apiRequest("/api/admin/users", {
           method: "POST",
@@ -261,7 +323,9 @@ export default function AdminUsersPage() {
           }),
         });
 
-        setSuccess("User created successfully.");
+        setSuccess(
+          "User created successfully."
+        );
       }
 
       setShowForm(false);
@@ -271,18 +335,26 @@ export default function AdminUsersPage() {
       await loadUsers();
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to save user.");
+
+      setError(
+        err.message || "Failed to save user."
+      );
     } finally {
       setSaving(false);
     }
   }
 
-  /* -------------------------------------------------------
-     Enable / Disable
-  ------------------------------------------------------- */
-  async function toggleDisabled(item: AdminUser) {
+  /* ============================================================
+     ENABLE / DISABLE ACCOUNT
+  ============================================================ */
+
+  async function toggleDisabled(
+    item: AdminUser
+  ) {
     if (item.id === user?.uid) {
-      setError("You cannot disable your own admin account.");
+      setError(
+        "You cannot disable your own admin account."
+      );
       return;
     }
 
@@ -306,21 +378,31 @@ export default function AdminUsersPage() {
 
       await loadUsers();
     } catch (err: any) {
-      setError(err.message || "Failed to update user status.");
+      setError(
+        err.message ||
+          "Failed to update user status."
+      );
     }
   }
 
-  /* -------------------------------------------------------
-     Delete user
-  ------------------------------------------------------- */
-  async function deleteUser(item: AdminUser) {
+  /* ============================================================
+     DELETE USER
+  ============================================================ */
+
+  async function deleteUser(
+    item: AdminUser
+  ) {
     if (item.id === user?.uid) {
-      setError("You cannot delete your own admin account.");
+      setError(
+        "You cannot delete your own admin account."
+      );
       return;
     }
 
     const confirmed = window.confirm(
-      `Are you sure you want to permanently delete ${item.name || item.email}?`
+      `Are you sure you want to permanently delete ${
+        item.name || item.email
+      }?`
     );
 
     if (!confirmed) return;
@@ -337,24 +419,31 @@ export default function AdminUsersPage() {
         }),
       });
 
-      setSuccess("User deleted successfully.");
+      setSuccess(
+        "User deleted successfully."
+      );
 
       await loadUsers();
     } catch (err: any) {
-      setError(err.message || "Failed to delete user.");
+      setError(
+        err.message ||
+          "Failed to delete user."
+      );
     } finally {
       setDeleting(null);
     }
   }
 
-  /* -------------------------------------------------------
-     Loading
-  ------------------------------------------------------- */
+  /* ============================================================
+     LOADING
+  ============================================================ */
+
   if (authLoading || loading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center">
         <div className="text-center">
           <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-pink-600" />
+
           <p className="text-sm text-gray-500">
             Loading users...
           </p>
@@ -363,11 +452,14 @@ export default function AdminUsersPage() {
     );
   }
 
+  /* ============================================================
+     PAGE
+  ============================================================ */
+
   return (
     <div className="space-y-6 p-4 md:p-6">
-      {/* --------------------------------------------------
-          Header
-      -------------------------------------------------- */}
+
+      {/* HEADER */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
@@ -388,75 +480,111 @@ export default function AdminUsersPage() {
         </button>
       </div>
 
-      {/* --------------------------------------------------
-          Messages
-      -------------------------------------------------- */}
+      {/* ERROR */}
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
+      {/* SUCCESS */}
       {success && (
         <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
           {success}
         </div>
       )}
 
-      {/* --------------------------------------------------
-          Filters
-      -------------------------------------------------- */}
+      {/* FILTERS */}
       <div className="rounded-xl border bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+
           <input
             type="text"
             placeholder="Search name, email, phone..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500"
           />
 
           <select
             value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
+            onChange={(e) =>
+              setRoleFilter(e.target.value)
+            }
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-pink-500"
           >
-            <option value="all">All Roles</option>
-            <option value="donor">Donor</option>
-            <option value="recipient">Recipient</option>
-            <option value="admin">Admin</option>
+            <option value="all">
+              All Roles
+            </option>
+
+            <option value="donor">
+              Donor
+            </option>
+
+            <option value="recipient">
+              Recipient
+            </option>
+
+            <option value="admin">
+              Admin
+            </option>
           </select>
 
           <select
             value={bloodFilter}
-            onChange={(e) => setBloodFilter(e.target.value)}
+            onChange={(e) =>
+              setBloodFilter(e.target.value)
+            }
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-pink-500"
           >
-            <option value="all">All Blood Types</option>
+            <option value="all">
+              All Blood Types
+            </option>
 
-            {BLOOD_TYPES.map((bloodType: string) => (
-              <option key={bloodType} value={bloodType}>
-                {bloodType}
-              </option>
-            ))}
+            {BLOOD_TYPES.map(
+              (bloodType: string) => (
+                <option
+                  key={bloodType}
+                  value={bloodType}
+                >
+                  {bloodType}
+                </option>
+              )
+            )}
           </select>
 
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) =>
+              setStatusFilter(e.target.value)
+            }
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-pink-500"
           >
-            <option value="all">All Status</option>
-            <option value="active">Active</option>
-            <option value="disabled">Disabled</option>
+            <option value="all">
+              All Status
+            </option>
+
+            <option value="active">
+              Active / Available
+            </option>
+
+            <option value="unavailable">
+              Unavailable
+            </option>
+
+            <option value="disabled">
+              Disabled
+            </option>
           </select>
+
         </div>
       </div>
 
-      {/* --------------------------------------------------
-          Statistics
-      -------------------------------------------------- */}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      {/* STATISTICS */}
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+
         <StatCard
           title="Total Users"
           value={users.length}
@@ -464,26 +592,49 @@ export default function AdminUsersPage() {
 
         <StatCard
           title="Donors"
-          value={users.filter((u) => u.role === "donor").length}
+          value={
+            users.filter(
+              (u) => u.role === "donor"
+            ).length
+          }
+        />
+
+        <StatCard
+          title="Available Donors"
+          value={
+            users.filter(
+              (u) =>
+                u.role === "donor" &&
+                !u.disabled &&
+                u.isAvailable
+            ).length
+          }
         />
 
         <StatCard
           title="Recipients"
           value={
-            users.filter((u) => u.role === "recipient").length
+            users.filter(
+              (u) =>
+                u.role === "recipient"
+            ).length
           }
         />
 
         <StatCard
           title="Admins"
-          value={users.filter((u) => u.role === "admin").length}
+          value={
+            users.filter(
+              (u) => u.role === "admin"
+            ).length
+          }
         />
+
       </div>
 
-      {/* --------------------------------------------------
-          User table
-      -------------------------------------------------- */}
+      {/* USER TABLE */}
       <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+
         <div className="flex items-center justify-between border-b px-4 py-4">
           <div>
             <h2 className="font-semibold text-gray-900">
@@ -491,13 +642,15 @@ export default function AdminUsersPage() {
             </h2>
 
             <p className="text-sm text-gray-500">
-              Showing {filteredUsers.length} of {users.length} users
+              Showing {filteredUsers.length} of{" "}
+              {users.length} users
             </p>
           </div>
         </div>
 
         {filteredUsers.length === 0 ? (
           <div className="px-6 py-12 text-center">
+
             <p className="font-medium text-gray-700">
               No users found
             </p>
@@ -505,12 +658,16 @@ export default function AdminUsersPage() {
             <p className="mt-1 text-sm text-gray-500">
               Try changing your search or filters.
             </p>
+
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1000px] text-sm">
+
+            <table className="w-full min-w-[1100px] text-sm">
+
               <thead className="bg-gray-50 text-left">
                 <tr>
+
                   <th className="px-4 py-3 font-semibold text-gray-600">
                     User
                   </th>
@@ -538,57 +695,75 @@ export default function AdminUsersPage() {
                   <th className="px-4 py-3 text-right font-semibold text-gray-600">
                     Actions
                   </th>
+
                 </tr>
               </thead>
 
               <tbody className="divide-y">
+
                 {filteredUsers.map((item) => {
-                  const isCurrentAdmin = item.id === user?.uid;
+
+                  const isCurrentAdmin =
+                    item.id === user?.uid;
 
                   return (
                     <tr
                       key={item.id}
                       className="hover:bg-gray-50"
                     >
-                      {/* User */}
+
+                      {/* USER */}
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-3">
+
                           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-pink-100 font-semibold text-pink-700">
                             {item.name
-                              ? item.name.charAt(0).toUpperCase()
+                              ? item.name
+                                  .charAt(0)
+                                  .toUpperCase()
                               : "U"}
                           </div>
 
                           <div>
+
                             <p className="font-medium text-gray-900">
-                              {item.name || "Unnamed User"}
+                              {item.name ||
+                                "Unnamed User"}
                             </p>
 
                             <p className="max-w-[180px] truncate text-xs text-gray-500">
                               {item.id}
                             </p>
+
                           </div>
+
                         </div>
                       </td>
 
-                      {/* Contact */}
+                      {/* CONTACT */}
                       <td className="px-4 py-4">
+
                         <p className="text-gray-900">
                           {item.email || "—"}
                         </p>
 
                         <p className="text-xs text-gray-500">
-                          {item.phone || "No phone"}
+                          {item.phone ||
+                            "No phone"}
                         </p>
+
                       </td>
 
-                      {/* Role */}
+                      {/* ROLE */}
                       <td className="px-4 py-4">
-                        <RoleBadge role={item.role} />
+                        <RoleBadge
+                          role={item.role}
+                        />
                       </td>
 
-                      {/* Blood */}
+                      {/* BLOOD TYPE */}
                       <td className="px-4 py-4">
+
                         {item.bloodType ? (
                           <span className="rounded-full bg-red-50 px-3 py-1 font-semibold text-red-700">
                             {item.bloodType}
@@ -598,31 +773,47 @@ export default function AdminUsersPage() {
                             —
                           </span>
                         )}
+
                       </td>
 
-                      {/* Donations */}
+                      {/* DONATIONS */}
                       <td className="px-4 py-4">
                         {item.role === "donor"
                           ? item.totalDonations
                           : "—"}
                       </td>
 
-                      {/* Status */}
+                      {/* STATUS */}
                       <td className="px-4 py-4">
+
                         {item.disabled ? (
+
                           <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600">
                             Disabled
                           </span>
+
+                        ) : item.role === "donor" &&
+                          !item.isAvailable ? (
+
+                          <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700">
+                            Unavailable
+                          </span>
+
                         ) : (
+
                           <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
                             Active
                           </span>
+
                         )}
+
                       </td>
 
-                      {/* Actions */}
+                      {/* ACTIONS */}
                       <td className="px-4 py-4">
+
                         <div className="flex justify-end gap-2">
+
                           <button
                             type="button"
                             onClick={() =>
@@ -650,38 +841,49 @@ export default function AdminUsersPage() {
                               <button
                                 type="button"
                                 disabled={
-                                  deleting === item.id
+                                  deleting ===
+                                  item.id
                                 }
                                 onClick={() =>
                                   deleteUser(item)
                                 }
                                 className="rounded-md bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
                               >
-                                {deleting === item.id
+                                {deleting ===
+                                item.id
                                   ? "Deleting..."
                                   : "Delete"}
                               </button>
                             </>
                           )}
+
                         </div>
+
                       </td>
+
                     </tr>
                   );
                 })}
+
               </tbody>
+
             </table>
+
           </div>
         )}
+
       </div>
 
-      {/* --------------------------------------------------
-          Add/Edit modal
-      -------------------------------------------------- */}
+      {/* ADD / EDIT MODAL */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+
           <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl">
+
             <div className="flex items-center justify-between border-b px-6 py-4">
+
               <div>
+
                 <h2 className="text-xl font-bold text-gray-900">
                   {editingUser
                     ? "Edit User"
@@ -693,6 +895,7 @@ export default function AdminUsersPage() {
                     ? "Update this user's account information."
                     : "Create a new BloodConnect account."}
                 </p>
+
               </div>
 
               <button
@@ -702,13 +905,15 @@ export default function AdminUsersPage() {
               >
                 ×
               </button>
+
             </div>
 
             <form
               onSubmit={handleSubmit}
               className="space-y-4 p-6"
             >
-              {/* Name */}
+
+              {/* NAME */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Name
@@ -718,14 +923,17 @@ export default function AdminUsersPage() {
                   type="text"
                   value={form.name}
                   onChange={(e) =>
-                    updateForm("name", e.target.value)
+                    updateForm(
+                      "name",
+                      e.target.value
+                    )
                   }
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500"
                   placeholder="Enter full name"
                 />
               </div>
 
-              {/* Email */}
+              {/* EMAIL */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Email
@@ -735,17 +943,22 @@ export default function AdminUsersPage() {
                   type="email"
                   value={form.email}
                   onChange={(e) =>
-                    updateForm("email", e.target.value)
+                    updateForm(
+                      "email",
+                      e.target.value
+                    )
                   }
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500"
                   placeholder="user@example.com"
                 />
               </div>
 
-              {/* Password */}
+              {/* PASSWORD */}
               <div>
+
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Password
+
                   {editingUser && (
                     <span className="ml-1 text-xs font-normal text-gray-400">
                       (leave empty to keep current password)
@@ -769,10 +982,12 @@ export default function AdminUsersPage() {
                       : "Minimum 6 characters"
                   }
                 />
+
               </div>
 
-              {/* Phone */}
+              {/* PHONE */}
               <div>
+
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Phone
                 </label>
@@ -781,15 +996,20 @@ export default function AdminUsersPage() {
                   type="tel"
                   value={form.phone}
                   onChange={(e) =>
-                    updateForm("phone", e.target.value)
+                    updateForm(
+                      "phone",
+                      e.target.value
+                    )
                   }
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500"
                   placeholder="Phone number"
                 />
+
               </div>
 
-              {/* Role */}
+              {/* ROLE */}
               <div>
+
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Role
                 </label>
@@ -804,16 +1024,26 @@ export default function AdminUsersPage() {
                   }
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-pink-500"
                 >
-                  <option value="donor">Donor</option>
+
+                  <option value="donor">
+                    Donor
+                  </option>
+
                   <option value="recipient">
                     Recipient
                   </option>
-                  <option value="admin">Admin</option>
+
+                  <option value="admin">
+                    Admin
+                  </option>
+
                 </select>
+
               </div>
 
-              {/* Blood Type */}
+              {/* BLOOD TYPE */}
               <div>
+
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Blood Type
                 </label>
@@ -828,6 +1058,7 @@ export default function AdminUsersPage() {
                   }
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-pink-500"
                 >
+
                   <option value="">
                     Select blood type
                   </option>
@@ -842,11 +1073,14 @@ export default function AdminUsersPage() {
                       </option>
                     )
                   )}
+
                 </select>
+
               </div>
 
-              {/* Buttons */}
+              {/* BUTTONS */}
               <div className="flex justify-end gap-3 border-t pt-4">
+
                 <button
                   type="button"
                   onClick={closeForm}
@@ -867,18 +1101,23 @@ export default function AdminUsersPage() {
                       ? "Save Changes"
                       : "Create User"}
                 </button>
+
               </div>
+
             </form>
+
           </div>
+
         </div>
       )}
+
     </div>
   );
 }
 
-/* -------------------------------------------------------
-   Small components
-------------------------------------------------------- */
+/* ============================================================
+   STAT CARD
+============================================================ */
 
 function StatCard({
   title,
@@ -889,20 +1128,40 @@ function StatCard({
 }) {
   return (
     <div className="rounded-xl border bg-white p-4 shadow-sm">
-      <p className="text-sm text-gray-500">{title}</p>
+
+      <p className="text-sm text-gray-500">
+        {title}
+      </p>
 
       <p className="mt-1 text-2xl font-bold text-gray-900">
         {value}
       </p>
+
     </div>
   );
 }
 
-function RoleBadge({ role }: { role: UserRole }) {
-  const styles: Record<UserRole, string> = {
-    donor: "bg-green-50 text-green-700",
-    recipient: "bg-blue-50 text-blue-700",
-    admin: "bg-purple-50 text-purple-700",
+/* ============================================================
+   ROLE BADGE
+============================================================ */
+
+function RoleBadge({
+  role,
+}: {
+  role: UserRole;
+}) {
+  const styles: Record<
+    UserRole,
+    string
+  > = {
+    donor:
+      "bg-green-50 text-green-700",
+
+    recipient:
+      "bg-blue-50 text-blue-700",
+
+    admin:
+      "bg-purple-50 text-purple-700",
   };
 
   return (
