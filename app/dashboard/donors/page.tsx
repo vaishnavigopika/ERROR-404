@@ -120,7 +120,7 @@ export default function DonorsPage() {
         </div>
 
         <Input
-          placeholder="Search by name, blood type, or college..."
+          placeholder="Search by name or blood type"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="max-w-md border-border"
